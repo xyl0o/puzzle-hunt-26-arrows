@@ -201,7 +201,12 @@
   .path.active .coord { color: rgba(240, 236, 235, .6); }
   .path.active .letter { border-bottom-color: rgba(240, 236, 235, .55); }
   .path.active .letter:focus { border-bottom-color: var(--paper); background: rgba(240, 236, 235, .18); }
-  .cell.peek { outline: 3px solid var(--ink); outline-offset: -3px; z-index: 1; }
+  /* the field that has focus, marked everywhere it appears */
+  .cell.xhl { outline: 3px solid var(--ink); outline-offset: -3px; z-index: 1; }
+  .cell.xhl::after { content: ''; position: absolute; inset: 0; background: rgba(255, 196, 0, .38); pointer-events: none; }
+  .letter.xhl, .path.active .letter.xhl { background: #ffd84d; border-color: var(--ink); color: var(--ink); }
+  .g.xhl .coord, .path.active .g.xhl .coord { color: var(--ink); font-weight: 700; }
+  .path.active .g.xhl .coord { background: #ffd84d; border-radius: 2px; }
   .empty { margin: 0; padding: 8px; max-width: 26ch; color: var(--ink-soft); font-size: 14px; line-height: 1.45; }
 
   .settings { position: fixed; top: 12px; right: 12px; z-index: 10; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
@@ -504,7 +509,6 @@
     box.removeAttribute('aria-invalid');
     sets[listId] = paths;
     list.replaceChildren();
-    Object.values(cells).forEach(c => c.classList.remove('peek'));
     empty.hidden = paths.length > 0;
     paths.forEach(path => {
       const li = document.createElement('li');
@@ -609,15 +613,25 @@
     const next = all[all.indexOf(L) + dir];
     if (next) { next.focus(); next.select(); }
   }
+  // Focusing a grid cell or a letter field marks that coordinate everywhere:
+  // the cell itself and every hint and solution letter that points at it.
+  function highlight(key) {
+    document.querySelectorAll('.xhl').forEach(x => x.classList.remove('xhl'));
+    if (!key) return;
+    cells[key].classList.add('xhl');
+    document.querySelectorAll(`input.letter[data-key="${key}"]`).forEach(L => {
+      L.classList.add('xhl');
+      L.parentElement.classList.add('xhl');
+    });
+  }
+  const keyOf = el => el.matches('#grid input') ? el.dataset.r + ',' + el.dataset.c : el.matches('input.letter') ? el.dataset.key : null;
   document.addEventListener('focusin', e => {
-    if (e.target.matches && e.target.matches('input.letter')) {
-      e.target.select();
-      cells[e.target.dataset.key].classList.add('peek');
-    }
+    if (!e.target.matches) return;
+    const key = keyOf(e.target);
+    if (e.target.matches('input.letter')) e.target.select();
+    highlight(key);
   });
-  document.addEventListener('focusout', e => {
-    if (e.target.matches && e.target.matches('input.letter')) cells[e.target.dataset.key].classList.remove('peek');
-  });
+  document.addEventListener('focusout', e => { if (e.target.matches && keyOf(e.target)) highlight(null); });
 
   /* ---------- selecting a path ---------- */
   const overlay = document.getElementById('overlay');
