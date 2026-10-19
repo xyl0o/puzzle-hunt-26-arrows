@@ -110,6 +110,25 @@
     outline: none;
   }
   .cell input:focus { box-shadow: inset 0 0 0 2px var(--ink); }
+  .cell .pen {
+    all: unset;
+    position: absolute;
+    top: 4%;
+    right: 4%;
+    width: 24%;
+    height: 24%;
+    display: none;
+    place-items: center;
+    box-sizing: border-box;
+    border-radius: 4px;
+    background: var(--ink);
+    color: var(--paper);
+    cursor: pointer;
+    z-index: 2;
+  }
+  .cell .pen svg { width: 68%; height: 68%; }
+  .cell.xhl .pen { display: grid; }
+  .cell .pen:hover { background: var(--trace); }
   /* the enlarged cell for notes */
   #noteBox {
     position: fixed;
@@ -468,6 +487,15 @@
         input.dataset.c = c;
         inputs[r + ',' + c] = input;
         cell.appendChild(input);
+        // a small pen on the highlighted cell opens its notes
+        const pen = document.createElement('button');
+        pen.type = 'button';
+        pen.className = 'pen';
+        pen.tabIndex = -1;
+        pen.setAttribute('aria-label', 'Open notes for field ' + coord(r, c));
+        pen.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13.5l.7-3L10.8 3a1.4 1.4 0 0 1 2 0l.2.2a1.4 1.4 0 0 1 0 2L5.5 12.8z"/><path d="M9.6 4.2l2.2 2.2"/></svg>';
+        pen.addEventListener('click', () => openNotes(r + ',' + c, cell));
+        cell.appendChild(pen);
       }
       grid.appendChild(cell);
     }
