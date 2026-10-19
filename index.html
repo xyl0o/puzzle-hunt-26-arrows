@@ -202,9 +202,10 @@
   .path.active .letter { border-bottom-color: rgba(240, 236, 235, .55); }
   .path.active .letter:focus { border-bottom-color: var(--paper); background: rgba(240, 236, 235, .18); }
   /* the field that has focus, marked everywhere it appears */
-  .cell.xhl { outline: 3px solid var(--ink); outline-offset: -3px; z-index: 1; }
+  .cell.xhl { outline: 4px solid var(--ink); outline-offset: -4px; z-index: 1; }
   .cell.xhl::after { content: ''; position: absolute; inset: 0; background: rgba(255, 196, 0, .38); pointer-events: none; }
-  .letter.xhl, .path.active .letter.xhl { background: #ffd84d; border-color: var(--ink); color: var(--ink); }
+  .letter.xhl { background: #ffd84d; border-color: var(--ink); color: var(--ink); outline: 2px solid var(--ink); outline-offset: 1px; }
+  .path.active .letter.xhl { background: #ffd84d; border-color: var(--ink); color: var(--ink); outline-color: var(--paper); }
   .g.xhl .coord, .path.active .g.xhl .coord { color: var(--ink); font-weight: 700; }
   .path.active .g.xhl .coord { background: #ffd84d; border-radius: 2px; }
   .empty { margin: 0; padding: 8px; max-width: 26ch; color: var(--ink-soft); font-size: 14px; line-height: 1.45; }
@@ -583,6 +584,7 @@
     }
     syncLetters();
     draw();
+    highlight(hlKey);   // the rows were rebuilt, so mark the current field again
   }
 
   function syncLetters() {
@@ -615,7 +617,9 @@
   }
   // Focusing a grid cell or a letter field marks that coordinate everywhere:
   // the cell itself and every hint and solution letter that points at it.
+  let hlKey = null;   // the last field you were in; it stays marked until you pick another
   function highlight(key) {
+    hlKey = key;
     document.querySelectorAll('.xhl').forEach(x => x.classList.remove('xhl'));
     if (!key) return;
     cells[key].classList.add('xhl');
@@ -629,9 +633,8 @@
     if (!e.target.matches) return;
     const key = keyOf(e.target);
     if (e.target.matches('input.letter')) e.target.select();
-    highlight(key);
+    if (key) highlight(key);
   });
-  document.addEventListener('focusout', e => { if (e.target.matches && keyOf(e.target)) highlight(null); });
 
   /* ---------- selecting a path ---------- */
   const overlay = document.getElementById('overlay');
