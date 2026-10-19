@@ -193,6 +193,10 @@
     color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
   }
+  .body { min-width: 0; }
+  .solution { display: flex; flex-wrap: nowrap; margin-top: 8px; white-space: nowrap; }
+  .solution .letter { border: 1.5px solid var(--ink-soft); border-radius: 4px; height: calc(var(--gw) * .85); line-height: calc(var(--gw) * .8); }
+  .path.active .solution .letter { border-color: rgba(240, 236, 235, .55); }
   .path.active .coord { color: rgba(240, 236, 235, .6); }
   .path.active .letter { border-bottom-color: rgba(240, 236, 235, .55); }
   .path.active .letter:focus { border-bottom-color: var(--paper); background: rgba(240, 236, 235, .18); }
@@ -538,7 +542,29 @@
         }
         words.appendChild(word);
       }
-      btn.append(label, words);
+
+      // the solution: the grid entry that starts at this number, read in the column's direction
+      const body = document.createElement('div');
+      body.className = 'body';
+      const solution = document.createElement('span');
+      solution.className = 'solution';
+      const [sr, sc] = cellOfNumber[path.num];
+      const [dr, dc] = listId === 'setA' ? [0, 1] : [1, 0];   // left column reads across, right column down
+      for (let r = sr, c = sc; open(r, c); r += dr, c += dc) {
+        const g = document.createElement('span');
+        g.className = 'g sol';
+        const L = document.createElement('input');
+        L.className = 'letter';
+        L.maxLength = 1;
+        L.autocomplete = 'off';
+        L.spellcheck = false;
+        L.dataset.key = r + ',' + c;
+        L.setAttribute('aria-label', 'Solution letter of field ' + coord(r, c));
+        g.append(L, Object.assign(document.createElement('span'), { className: 'coord', textContent: coord(r, c) }));
+        solution.appendChild(g);
+      }
+      body.append(words, solution);
+      btn.append(label, body);
       li.appendChild(btn);
       list.appendChild(li);
     });
@@ -576,8 +602,8 @@
     else if (e.key === 'ArrowLeft' || (e.key === 'Backspace' && !L.value)) { e.preventDefault(); stepLetter(L, -1); }
   });
   function stepLetter(L, dir) {
-    const row = L.closest('.path');
-    const all = [...row.querySelectorAll('input.letter')];
+    const group = L.closest('.words, .solution');
+    const all = [...group.querySelectorAll('input.letter')];
     const next = all[all.indexOf(L) + dir];
     if (next) { next.focus(); next.select(); }
   }
