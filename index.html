@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arrows</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f0eceb;
+    --cell: #f6f2f1;
+    --ink: #131a2b;
+    --ink-soft: #5b6275;
+    --trace: #2447e8;
+    --wash: #dbe3ff;
+    --land: #a9bbff;
+    --wash-black: #2a3a86;
+    --gap: clamp(16px, 2.5vw, 40px);
+    --size: min(84vh, 42vw, 720px);
+    --gw: clamp(17px, 1.95vw, 28px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--gap);
+    padding: 4vh var(--gap);
+  }
+  @media (max-width: 700px) { :root { --gap: 8px; } }
+
+  /* ---------- board ---------- */
+  .board { position: relative; width: var(--size); height: var(--size); }
+  #grid {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(9, 1fr);
+    border: 2px solid var(--ink);
+    background: var(--ink);
+    gap: 2px;
+  }
+  .cell { position: relative; background: var(--cell); transition: background-color .12s; }
+  .cell.black { background: var(--ink); }
+          .files, .ranks {
+    position: absolute;
+    display: grid;
+    gap: 2px;
+    color: var(--ink-soft);
+    font-size: clamp(10px, calc(var(--size) / 9 * 0.17), 14px);
+    font-weight: 500;
+    pointer-events: none;
+    user-select: none;
+  }
+  .files { left: 2px; right: 2px; bottom: 100%; margin-bottom: 4px; grid-template-columns: repeat(9, 1fr); text-align: center; }
+  .ranks { top: 2px; bottom: 2px; right: 100%; margin-right: 6px; grid-template-rows: repeat(9, 1fr); align-items: center; }
+  .num {
+    position: absolute;
+    top: 3%;
+    left: 6%;
+    font-size: calc(var(--size) / 9 * 0.17);
+    pointer-events: none;
+    line-height: 1;
+    z-index: 1;
+  }
+  .cell input {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    text-align: center;
+    text-transform: uppercase;
+    font: inherit;
+    font-weight: 500;
+    font-size: calc(var(--size) / 9 * 0.55);
+    color: var(--ink);
+    padding: 12% 0 0;
+    caret-color: transparent;
+    outline: none;
+  }
+  .cell input:focus { box-shadow: inset 0 0 0 2px var(--ink); }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  /* ---------- path lists ---------- */
+  .col { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-height: 92vh; width: 100%; }
+  .col.left { justify-self: end; }
+  .col.right { justify-self: start; }
+  .panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; scrollbar-width: thin; }
+  .source { flex: none; display: grid; gap: 4px; padding: 0 4px; }
+  .source textarea {
+    width: 100%;
+    min-height: 4.6em;
+    resize: vertical;
+    padding: 6px 8px;
+    border: 1.5px solid var(--ink-soft);
+    border-radius: 6px;
+    background: var(--cell);
+    color: var(--ink);
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .source textarea:focus { outline: 2px solid var(--trace); outline-offset: 1px; border-color: var(--trace); }
+  .source textarea[aria-invalid="true"] { border-color: #c4302b; }
+  .source .foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .source .err { margin: 0; min-height: 1.3em; font-size: 12px; line-height: 1.3; color: #c4302b; }
+  .source .reset {
+    all: unset;
+    flex: none;
+    box-sizing: border-box;
+    padding: 2px 8px;
+    border: 1.5px solid var(--ink-soft);
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.3;
+    cursor: pointer;
+  }
+  .source .reset:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .source .reset:focus-visible { outline: 2px solid var(--trace); outline-offset: 1px; }
+  .source .reset:disabled { opacity: .4; cursor: default; }
+  .panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .path {
+    box-sizing: border-box;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 2.4em 1fr;
+    align-items: start;
+    gap: 6px;
+    padding: 6px 8px 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .path:hover { background: rgba(19, 26, 43, .06); }
+  .path.active { background: var(--ink); color: var(--paper); box-shadow: inset 5px 0 0 var(--pc, var(--trace)); }
+  .path .label {
+    all: unset;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 500;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    line-height: 28px;
+  }
+  .path .label:focus-visible { outline: 2px solid var(--trace); outline-offset: 1px; }
+  .words { display: flex; flex-wrap: wrap; gap: 4px calc(var(--gw) * .7); }
+  .word { display: flex; flex-wrap: nowrap; flex: none; white-space: nowrap; }
+  .g { display: flex; flex-direction: column; align-items: center; width: var(--gw); }
+  .g.tick { width: 12px; }
+  .g svg { width: var(--gw); height: var(--gw); display: block; overflow: visible; }
+  .g.tick svg { width: 12px; }
+  .letter {
+    all: unset;
+    box-sizing: border-box;
+    cursor: text;
+    width: calc(var(--gw) * .8);
+    height: calc(var(--gw) * .8);
+    margin-top: 1px;
+    border-bottom: 1.5px solid var(--ink-soft);
+    caret-color: transparent;
+    text-align: center;
+    font-size: calc(var(--gw) * .55);
+    font-weight: 600;
+    line-height: calc(var(--gw) * .75);
+    text-transform: uppercase;
+  }
+  .letter:focus { border-bottom-color: var(--trace); background: var(--wash); }
+  .coord {
+    margin-top: 1px;
+    font-size: calc(var(--gw) * .36);
+    line-height: 1;
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+  }
+  .path.active .coord { color: rgba(240, 236, 235, .6); }
+  .path.active .letter { border-bottom-color: rgba(240, 236, 235, .55); }
+  .path.active .letter:focus { border-bottom-color: var(--paper); background: rgba(240, 236, 235, .18); }
+  .cell.peek { outline: 3px solid var(--ink); outline-offset: -3px; z-index: 1; }
+  .empty { margin: 0; padding: 8px; max-width: 26ch; color: var(--ink-soft); font-size: 14px; line-height: 1.45; }
+
+  @media (prefers-reduced-motion: reduce) { .cell { transition: none; } }
+</style>
+</head>
+<body>
+<section class="col left">
+  <nav class="panel" aria-label="First set of paths"><ul id="setA"></ul><p class="empty" hidden>The first set of paths goes here.</p></nav>
+  <div class="source"><textarea id="rawA" aria-label="Input codes, first set" spellcheck="false"></textarea><div class="foot"><p class="err" id="errA" aria-live="polite"></p><button type="button" class="reset" id="resetA">Reset to defaults</button></div></div>
+</section>
+<main class="board">
+  <div id="grid"></div>
+  <svg id="overlay" aria-hidden="true"></svg>
+</main>
+<section class="col right">
+  <nav class="panel" aria-label="Second set of paths"><ul id="setB"></ul><p class="empty" hidden>The second set of paths goes here.</p></nav>
+  <div class="source"><textarea id="rawB" aria-label="Input codes, second set" spellcheck="false"></textarea><div class="foot"><p class="err" id="errB" aria-live="polite"></p><button type="button" class="reset" id="resetB">Reset to defaults</button></div></div>
+</section>
+
+<script>
+  /* ---------- puzzle input ----------
+     Pasted exactly as received. "<number>." starts an arrow line, "/" separates
+     words, spaces separate arrows, "." is stay and "'" is a tick mark. */
+  const RAW_A = `e1.ee se sw e w ne n5.e se ne ss / ww e e nn / sw s / ne w wsw ese ssw s ne nwnw w s9.e w ene / e ss wnw e s ne n10.. ss nn . sse e11.e e nne .12.ee w w ese13.ne e n . w e14.ee e e15.. ee nn nw ene17.nwnw se e se s ssw nn nene21.ee ene s s24.wsw n n s s w s nw e25.ne nene nwnw s nn / ene s s . n w26.. wnw nw / wnw nnw n ene se w27.nn e e nn ' swsw / nene n w28.wnw n nw sse`;
+  const RAW_B = `s1.ese ss sese n ene2.sse w s sese ssw ne3.ssw n e e / n s w e4.. ww sw ese nn5.s sse w ene ww6.s ssw n ssw ese se wnw ww nw / nnw sw s ene s nn wsw nn7.wsw ss s / nw ene sw n ese8.ww se s ww ssw n / . wnw nn se14.e ene se wnw16.. w nwnw nene se nw18.s ene . s n .19.nne wnw sw nn sse e20.sw s nnw w21.nene e ss nnw e s s22.nn nne e23.nnw nnw ss ss nne nnw ss `;
+
+  /* ---------- grid ---------- */
+  const N = 9;
+  const BLACK = [
+    [1,5],[2,5],[3,5],
+    [4,4],
+    [5,7],[5,8],[5,9],
+    [6,1],[6,2],[6,3],
+    [7,6],[8,6],[9,6],
+  ];
+  const FILES = 'ABCDEFGHI';
+  const ROWS_FROM_TOP = true;   // true: row 1 is the top row; false: rank 1 at the bottom, like a chess board
+  const coord = (r, c) => FILES[c - 1] + (ROWS_FROM_TOP ? r : N + 1 - r);
+  const isBlack = (r, c) => BLACK.some(([br, bc]) => br === r && bc === c);
+  const open = (r, c) => r >= 1 && r <= N && c >= 1 && c <= N && !isBlack(r, c);
+
+  const grid = document.getElementById('grid');
+  const inputs = {};
+  const cells = {};
+  const cellOfNumber = {};
+  let n = 0;
+
+  for (let r = 1; r <= N; r++) {
+    for (let c = 1; c <= N; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cells[r + ',' + c] = cell;
+      if (isBlack(r, c)) {
+        cell.classList.add('black');
+      } else {
+        const startsAcross = !open(r, c - 1) && open(r, c + 1);
+        const startsDown = !open(r - 1, c) && open(r + 1, c);
+        if (startsAcross || startsDown) {
+          const num = document.createElement('span');
+          num.className = 'num';
+          num.textContent = ++n;
+          cell.appendChild(num);
+          cellOfNumber[n] = [r, c];
+        }
+        const input = document.createElement('input');
+        input.maxLength = 1;
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.dataset.r = r;
+        input.dataset.c = c;
+        inputs[r + ',' + c] = input;
+        cell.appendChild(input);
+      }
+      grid.appendChild(cell);
+    }
+  }
+
+  const boardEl = document.querySelector('.board');
+  const files = document.createElement('div');
+  files.className = 'files';
+  files.setAttribute('aria-hidden', 'true');
+  const ranks = document.createElement('div');
+  ranks.className = 'ranks';
+  ranks.setAttribute('aria-hidden', 'true');
+  for (let i = 1; i <= N; i++) {
+    files.appendChild(Object.assign(document.createElement('span'), { textContent: FILES[i - 1] }));
+    ranks.appendChild(Object.assign(document.createElement('span'), { textContent: ROWS_FROM_TOP ? i : N + 1 - i }));
+  }
+  boardEl.append(files, ranks);
+
+  const focusAt = (r, c) => { const i = inputs[r + ',' + c]; if (i) { i.focus(); i.select(); return true; } return false; };
+
+  grid.addEventListener('keydown', e => {
+    const t = e.target;
+    if (t.tagName !== 'INPUT') return;
+    const r = +t.dataset.r, c = +t.dataset.c;
+    const dirs = { ArrowUp: [-1,0], ArrowDown: [1,0], ArrowLeft: [0,-1], ArrowRight: [0,1] };
+    if (dirs[e.key]) {
+      e.preventDefault();
+      let [dr, dc] = dirs[e.key], nr = r + dr, nc = c + dc;
+      while (nr >= 1 && nr <= N && nc >= 1 && nc <= N && !open(nr, nc)) { nr += dr; nc += dc; }
+      focusAt(nr, nc);
+    } else if (e.key === 'Backspace' && !t.value) {
+      e.preventDefault();
+      focusAt(r, c - 1);
+    }
+  });
+  grid.addEventListener('input', e => {
+    if (e.target.value) focusAt(+e.target.dataset.r, +e.target.dataset.c + 1);
+    syncLetters();
+    saveState();
+  });
+  grid.addEventListener('focusin', e => e.target.select && e.target.select());
+
+  /* ---------- parsing ----------
+     Compass names become numpad digits:  7 8 9 / 4 5 6 / 1 2 3  (5 = stay).
+     An arrow is one or two moves (two = dotted or bent arrow). It lands on one
+     field, and that field's letter belongs to the arrow. */
+  const COMPASS = { n: '8', ne: '9', e: '6', se: '3', s: '2', sw: '1', w: '4', nw: '7' };
+  const STEP = {
+    8: [-1, 0], 9: [-1, 1], 6: [0, 1], 3: [1, 1],
+    2: [1, 0],  1: [1, -1], 4: [0, -1], 7: [-1, -1], 5: [0, 0],
+  };
+
+  function parseArrow(raw) {
+    if (raw === "'") return { tick: true, code: '' };
+    if (raw === '.') return { code: '5' };
+    const parts = raw.match(/nw|ne|sw|se|n|e|s|w/g) || [];
+    if (parts.join('') !== raw) throw new Error('Cannot read arrow "' + raw + '"');
+    return { code: parts.map(p => COMPASS[p]).join('') };
+  }
+
+  function parseSet(raw) {
+    const chunks = raw.split(/(\d+)\./);   // [preamble, num, body, num, body, ...]
+    if (raw.trim() && chunks.length < 3) throw new Error('No path labels like "1." found.');
+    const paths = [];
+    for (let i = 1; i < chunks.length; i += 2) {
+      const num = +chunks[i];
+      if (!cellOfNumber[num]) throw new Error('The grid has no clue number ' + num + '.');
+      let [r, c] = cellOfNumber[num];
+      const words = chunks[i + 1].split('/').map(w => w.trim().split(/\s+/).filter(Boolean).map(tok => {
+        const a = parseArrow(tok);
+        if (!a.tick) {
+          for (const d of a.code) {
+            r += STEP[d][0]; c += STEP[d][1];
+            if (r < 1 || r > N || c < 1 || c > N) throw new Error('Path ' + num + ' leaves the grid at "' + tok + '".');
+          }
+          if (isBlack(r, c)) throw new Error('Path ' + num + ' lands on a black square at "' + tok + '".');
+          a.land = [r, c];
+        }
+        return a;
+      })).filter(w => w.length);
+      paths.push({ num, words });
+    }
+    return paths;
+  }
+
+  /* ---------- glyph drawing (svg, screen coords, y down) ---------- */
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const el = (name, attrs, parent) => {
+    const e = document.createElementNS(SVGNS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const unit = d => { const [dr, dc] = STEP[d]; const l = Math.hypot(dr, dc) || 1; return [dc / l, dr / l]; };
+
+  function chevron(parent, x, y, ux, uy, size, width) {
+    const a = 0.72;
+    for (const s of [1, -1]) {
+      const cx = Math.cos(a * s), sx = Math.sin(a * s);
+      const bx = -(ux * cx - uy * sx), by = -(ux * sx + uy * cx);
+      el('line', { x1: x, y1: y, x2: x + bx * size, y2: y + by * size, 'stroke-width': width }, parent);
+    }
+  }
+
+  function glyph(arrow) {
+    const svg = el('svg', { viewBox: '0 0 32 32', fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+    if (arrow.tick) {
+      svg.setAttribute('viewBox', '0 0 14 32');
+      el('line', { x1: 5, y1: 12, x2: 8, y2: 7, 'stroke-width': 1.6 }, svg);
+      return svg;
+    }
+    if (arrow.code === '5') {
+      el('circle', { cx: 16, cy: 16, r: 2.6, fill: 'currentColor', stroke: 'none' }, svg);
+      return svg;
+    }
+    const single = arrow.code.length === 1;
+    const len = single ? 22 : 11;
+    const pts = [[0, 0]];
+    let ux = 0, uy = 0;
+    for (const d of arrow.code) {
+      [ux, uy] = unit(d);
+      const [px, py] = pts[pts.length - 1];
+      pts.push([px + ux * len, py + uy * len]);
+    }
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const ox = 16 - (Math.min(...xs) + Math.max(...xs)) / 2;
+    const oy = 16 - (Math.min(...ys) + Math.max(...ys)) / 2;
+    const P = pts.map(([x, y]) => [x + ox, y + oy]);
+    el('polyline', { points: P.map(p => p.join(',')).join(' '), 'stroke-width': 2 }, svg);
+    const [ex, ey] = P[P.length - 1];
+    chevron(svg, ex, ey, ux, uy, 7, 2);
+    if (!single) el('circle', { cx: P[1][0], cy: P[1][1], r: 2.4, fill: 'currentColor', stroke: 'none' }, svg);
+    return svg;
+  }
+
+  /* ---------- panels ---------- */
+  const sets = { setA: [], setB: [] };     // listId -> parsed paths
+
+  // Re-reads the input text of one column and rebuilds its rows. A text that
+  // cannot be read leaves the last good rows in place and shows the reason.
+  function renderSet(listId, raw) {
+    const list = document.getElementById(listId);
+    const empty = list.nextElementSibling;
+    const box = document.getElementById('raw' + listId.slice(3));
+    const err = document.getElementById('err' + listId.slice(3));
+    let paths;
+    try {
+      paths = raw.trim() ? parseSet(raw) : [];
+    } catch (e) {
+      err.textContent = e.message;
+      box.setAttribute('aria-invalid', 'true');
+      return;
+    }
+    err.textContent = '';
+    box.removeAttribute('aria-invalid');
+    sets[listId] = paths;
+    list.replaceChildren();
+    Object.values(cells).forEach(c => c.classList.remove('peek'));
+    empty.hidden = paths.length > 0;
+    paths.forEach(path => {
+      const li = document.createElement('li');
+      const btn = document.createElement('div');
+      btn.className = 'path';
+      btn.dataset.set = listId;
+      btn.dataset.num = path.num;
+      const label = document.createElement('button');
+      label.className = 'label';
+      label.type = 'button';
+      label.setAttribute('aria-pressed', 'false');
+      label.setAttribute('aria-label', 'Show path ' + path.num + ' on the grid');
+      label.textContent = path.num + '.';
+      const words = document.createElement('span');
+      words.className = 'words';
+      for (const w of path.words) {
+        const word = document.createElement('span');
+        word.className = 'word';
+        for (const a of w) {
+          const g = document.createElement('span');
+          g.className = 'g' + (a.tick ? ' tick' : '');
+          g.appendChild(glyph(a));
+          if (!a.tick) {
+            const L = document.createElement('input');
+            L.className = 'letter';
+            L.maxLength = 1;
+            L.autocomplete = 'off';
+            L.spellcheck = false;
+            L.dataset.key = a.land.join(',');
+            L.setAttribute('aria-label', 'Letter of field ' + coord(...a.land));
+            g.appendChild(L);
+            g.appendChild(Object.assign(document.createElement('span'), { className: 'coord', textContent: coord(...a.land) }));
+          } else {
+            g.appendChild(Object.assign(document.createElement('span'), { className: 'letter', style: 'border-color:transparent' }));
+          }
+          word.appendChild(g);
+        }
+        words.appendChild(word);
+      }
+      btn.append(label, words);
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+
+    // keep selections whose path still exists, drop the others and free their colour
+    for (const [key, sel] of [...selected]) {
+      if (sel.listId !== listId) continue;
+      const row = list.querySelector(`.path[data-num="${sel.num}"]`);
+      if (row) setRowState(row, sel.color); else selected.delete(key);
+    }
+    syncLetters();
+    draw();
+  }
+
+  function syncLetters() {
+    document.querySelectorAll('.letter[data-key]').forEach(L => {
+      const i = inputs[L.dataset.key];
+      if (i && L.value !== i.value) L.value = i.value;
+    });
+  }
+
+  // typing under an arrow writes the grid cell, then every view of that cell follows
+  document.addEventListener('input', e => {
+    const L = e.target;
+    if (!L.matches('input.letter')) return;
+    inputs[L.dataset.key].value = L.value;
+    syncLetters();
+    saveState();
+    if (L.value) stepLetter(L, 1);
+  });
+  document.addEventListener('keydown', e => {
+    const L = e.target;
+    if (!L.matches || !L.matches('input.letter')) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); stepLetter(L, 1); }
+    else if (e.key === 'ArrowLeft' || (e.key === 'Backspace' && !L.value)) { e.preventDefault(); stepLetter(L, -1); }
+  });
+  function stepLetter(L, dir) {
+    const row = L.closest('.path');
+    const all = [...row.querySelectorAll('input.letter')];
+    const next = all[all.indexOf(L) + dir];
+    if (next) { next.focus(); next.select(); }
+  }
+  document.addEventListener('focusin', e => {
+    if (e.target.matches && e.target.matches('input.letter')) {
+      e.target.select();
+      cells[e.target.dataset.key].classList.add('peek');
+    }
+  });
+  document.addEventListener('focusout', e => {
+    if (e.target.matches && e.target.matches('input.letter')) cells[e.target.dataset.key].classList.remove('peek');
+  });
+
+  /* ---------- selecting a path ---------- */
+  const overlay = document.getElementById('overlay');
+  const board = document.querySelector('.board');
+  const CELL_PAD = 0.10;  // share of a cell kept free on every side
+  const CHAIN = false;    // false: an arrow lands at the offset it left from (parallel lines);
+                          // true: it lands one step further along, so lines join end to end
+  const PALETTE = ['#2447e8', '#1f9d55', '#e8780c', '#c2338f', '#0e9aa7', '#d93a3a', '#7a3fe0', '#a8800a'];
+  const selected = new Map();   // "listId:num" -> { listId, num, color }, in selection order
+
+  const freeColor = () => {
+    const used = new Set([...selected.values()].map(x => x.color));
+    return PALETTE.find(c => !used.has(c));
+  };
+
+  function clearHits() {
+    Object.values(cells).forEach(e => { e.style.background = ''; e.style.boxShadow = ''; });
+    overlay.replaceChildren();
+  }
+
+  const mix = (color, pct, base) => `color-mix(in srgb, ${color} ${pct}%, ${base})`;
+
+  function draw() {
+    clearHits();
+    const marks = {};   // cell key -> [{ color, land }]
+    const rings = {};   // cell key -> [color] for start cells
+    const mark = (cr, cc, color, land) => {
+      const list = marks[cr + ',' + cc] || (marks[cr + ',' + cc] = []);
+      const own = list.find(m => m.color === color);
+      if (own) own.land = own.land || land; else list.push({ color, land });
+    };
+
+    const w = board.offsetWidth, h = board.offsetHeight;
+    overlay.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    const cellPx = w / N, sw = Math.max(2, cellPx * 0.04);
+    const anchor = (cr, cc, t) => {
+      const e = cells[cr + ',' + cc];
+      const pad = e.offsetWidth * CELL_PAD, span = e.offsetWidth - 2 * pad;
+      return [e.offsetLeft + pad + t * span, e.offsetTop + pad + t * span];
+    };
+
+    for (const { listId, num, color } of selected.values()) {
+      const path = sets[listId].find(p => p.num === num);
+      let [r, c] = cellOfNumber[path.num];
+      const start = [r, c];
+      mark(r, c, color, false);
+      const steps = [];                       // one per letter: { from, to }
+      for (const word of path.words) for (const a of word) {
+        if (a.tick) continue;
+        const from = [r, c];
+        for (const d of a.code) { r += STEP[d][0]; c += STEP[d][1]; mark(r, c, color, false); }
+        mark(r, c, color, true);
+        steps.push({ from, to: [r, c] });
+      }
+      (rings[start.join(',')] = rings[start.join(',')] || []).push(color);
+
+      // Straight line from where an arrow leaves its cell to where it lands in the next.
+      // Both points slide along the cell's top-left to bottom-right diagonal with the
+      // letter index, so repeated visits to a cell never share a spot.
+      const g = el('g', { fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.9 }, overlay);
+      const n = steps.length;
+      steps.forEach(({ from, to }, k) => {
+        const [x0, y0] = anchor(from[0], from[1], k / n);
+        const [x1, y1] = anchor(to[0], to[1], (CHAIN ? k + 1 : k) / n);
+        const d = Math.hypot(x1 - x0, y1 - y0);
+        if (d < 1) { el('circle', { cx: x1, cy: y1, r: cellPx * 0.07 }, g); return; }
+        el('line', { x1: x0, y1: y0, x2: x1, y2: y1 }, g);
+        chevron(g, x1, y1, (x1 - x0) / d, (y1 - y0) / d, cellPx * 0.12, sw);
+      });
+      const [sx, sy] = anchor(start[0], start[1], 0);
+      el('circle', { cx: sx, cy: sy, r: cellPx * 0.06, fill: color, stroke: 'none' }, g);
+    }
+
+    // cells shared by several paths are split into diagonal stripes, one per colour
+    for (const [key, list] of Object.entries(marks)) {
+      const black = cells[key].classList.contains('black');
+      const tones = list.map(m => black ? mix(m.color, m.land ? 80 : 60, '#131a2b') : mix(m.color, m.land ? 45 : 20, '#f6f2f1'));
+      cells[key].style.background = tones.length === 1 ? tones[0]
+        : `linear-gradient(135deg, ${tones.map((t, i) => `${t} ${i * 100 / tones.length}% ${(i + 1) * 100 / tones.length}%`).join(', ')})`;
+    }
+    for (const [key, colors] of Object.entries(rings)) {
+      cells[key].style.boxShadow = colors.map((c, i) => `inset 0 0 0 ${3 * (i + 1)}px ${c}`).join(', ');
+    }
+  }
+
+  function select(row) {
+    if (!row) {
+      selected.clear();
+      document.querySelectorAll('.path.active').forEach(r => setRowState(r, null));
+      draw();
+      return;
+    }
+    const key = row.dataset.set + ':' + row.dataset.num;
+    if (selected.has(key)) {
+      selected.delete(key);
+      setRowState(row, null);
+    } else {
+      const color = freeColor();
+      if (!color) return;    // every colour is in use: deselect a path first
+      selected.set(key, { listId: row.dataset.set, num: +row.dataset.num, color });
+      setRowState(row, color);
+    }
+    draw();
+  }
+
+  function setRowState(row, color) {
+    row.classList.toggle('active', !!color);
+    if (color) row.style.setProperty('--pc', color); else row.style.removeProperty('--pc');
+    row.querySelector('.label').setAttribute('aria-pressed', String(!!color));
+  }
+
+  document.addEventListener('click', e => {
+    if (e.target.matches('input.letter')) return;
+    const row = e.target.closest('.path');
+    if (row) select(row);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && selected.size && e.target.tagName !== 'TEXTAREA') select(null);
+  });
+
+  /* ---------- saved edits ----------
+     Codes and typed letters live in this browser's localStorage. Without it
+     (private window, blocked storage) the page still works, it just forgets. */
+  const STORE_KEY = 'arrows-puzzle-v1';
+  const DEFAULTS = { setA: RAW_A.trim(), setB: RAW_B.trim() };
+
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+  }
+  function saveState() {
+    const letters = {};
+    for (const [key, i] of Object.entries(inputs)) if (i.value) letters[key] = i.value;
+    const codes = {};
+    for (const id of Object.keys(DEFAULTS)) codes[id] = document.getElementById('raw' + id.slice(3)).value;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters })); } catch { /* storage unavailable */ }
+  }
+
+  const saved = loadState();
+  for (const [key, v] of Object.entries(saved.letters || {})) if (inputs[key] && typeof v === 'string') inputs[key].value = v.slice(0, 1);
+
+  for (const listId of Object.keys(DEFAULTS)) {
+    const box = document.getElementById('raw' + listId.slice(3));
+    const reset = document.getElementById('reset' + listId.slice(3));
+    const refresh = () => { renderSet(listId, box.value); reset.disabled = box.value.trim() === DEFAULTS[listId]; };
+    const savedText = saved.codes && saved.codes[listId];
+    box.value = typeof savedText === 'string' ? savedText : DEFAULTS[listId];
+    box.addEventListener('input', () => { refresh(); saveState(); });
+    reset.addEventListener('click', () => {
+      if (!confirm('Reset this column\'s codes to the defaults? Your edits to them will be lost.')) return;
+      box.value = DEFAULTS[listId];
+      refresh();
+      saveState();
+    });
+    refresh();
+  }
+
+  new ResizeObserver(() => draw()).observe(board);
+</script>
+</body>
+</html>
