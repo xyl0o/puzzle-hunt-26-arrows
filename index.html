@@ -907,16 +907,16 @@
       let [r, c] = path.start;
       const start = [r, c];
       const cols = wordColors(color, path.words.length);
-      mark(r, c, cols[0], false);
+      // the start field is not part of the hint, so it is neither tinted nor drawn from
       const steps = [];                       // one per letter: { from, to, w }
       path.words.forEach((word, w) => { for (const a of word) {
         if (a.tick) continue;
         const from = [r, c];
-        for (const d of a.code) { r += STEP[d][0]; c += STEP[d][1]; mark(r, c, cols[w], false); }
+        for (const d of a.code) { r += STEP[d][0]; c += STEP[d][1]; if (steps.length) mark(r, c, cols[w], false); }
         mark(r, c, cols[w], true);
         steps.push({ from, to: [r, c], w });
       } });
-      (rings[start.join(',')] = rings[start.join(',')] || []).push(color);
+      if (steps.length) { const k0 = steps[0].to.join(','); (rings[k0] = rings[k0] || []).push(color); }   // the ring marks where the hint begins
 
       // Straight line from where an arrow leaves its cell to where it lands in the next.
       // Both points slide along the cell's top-left to bottom-right diagonal with the
@@ -961,8 +961,12 @@
         : anchor(steps[k].to[0], steps[k].to[1], (CHAIN ? k + 1 : k) / n);
 
       steps.forEach(({ w }, k) => {
-        if (k === 0) add(depPos(0), false, w);
-        add(landPos(k), true, w);
+        if (k === 0) {
+          // the route begins on the first landing field; there is no arrow into it
+          const b = box(steps[0].to[0], steps[0].to[1]);
+          add(direct ? [b.x + b.w / 2, b.y + b.w / 2] : landPos(0), true, w);
+          nodes[0].first = true;
+        } else add(landPos(k), true, w);
         if (k + 1 < n) add(depPos(k + 1), false, steps[k + 1].w);
       });
 
@@ -1005,7 +1009,7 @@
       nodes.forEach(p => {
         const wc = { stroke: cols[p.w] };
         if (p.stay) el('circle', { cx: p.x, cy: p.y, r: cellPx * 0.07, ...wc }, g);
-        else if (p.land) { const hg = el('g', wc, g); chevron(hg, p.x, p.y, p.tin[0], p.tin[1], head, sw); }
+        else if (p.land && !p.first) { const hg = el('g', wc, g); chevron(hg, p.x, p.y, p.tin[0], p.tin[1], head, sw); }
       });
       if (nodes.length) el('circle', { cx: nodes[0].x, cy: nodes[0].y, r: cellPx * 0.06, fill: color, stroke: 'none' }, g);
     }
