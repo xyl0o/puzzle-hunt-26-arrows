@@ -1199,6 +1199,7 @@
     room: randomRoom(),
     onLetter: null,    // (key, value) => void, set by the sync module
     onNote: null,      // (slotKey, value) => void, set by the sync module
+    sendCodes: null,   // (codes) => void, set by the sync module: tells the other windows about imported codes
     onRoom: null,      // (room) => void, set by the sync module
     status: text => { document.getElementById('roomStatus').textContent = text; },
   };
@@ -1207,6 +1208,7 @@
     sync,
     letters: () => Object.fromEntries(Object.entries(inputs).filter(([, i]) => i.value).map(([k, i]) => [k, i.value])),
     notes: () => ({ ...notes }),
+    applyCodes: codes => applyCodes(codes),
     setNote: (slotKey, value) => setNote(slotKey, value, false),
     // a letter that arrived from another window: show it and keep it, without sending it back
     setLetter(key, value) {
@@ -1223,6 +1225,26 @@
      (private window, blocked storage) the page still works, it just forgets. */
   const STORE_KEY = 'arrows-puzzle-v1';
   const DEFAULTS = { setT: RAW_T.trim(), setA: RAW_A.trim(), setB: RAW_B.trim() };
+
+  // The three code boxes, by column id. Filled in below; applyCodes() is used by import and by sync.
+  const columns = {};
+  const CODE_NAMES = { left: 'setA', right: 'setB', title: 'setT' };   // names used in export files
+  const canRead = (listId, text) => { try { PARSERS[listId](text); return true; } catch { return false; } };
+
+  // Puts new codes into the boxes. Only texts that can be read are taken, the others are left alone.
+  // Returns how many were applied.
+  function applyCodes(codes) {
+    let applied = 0;
+    for (const [name, listId] of Object.entries(CODE_NAMES)) {
+      const text = codes && codes[name];
+      if (typeof text !== 'string' || !columns[listId] || !canRead(listId, text)) continue;
+      columns[listId].box.value = text;
+      columns[listId].refresh();
+      applied++;
+    }
+    saveState();
+    return applied;
+  }
 
   function loadState() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
@@ -1307,22 +1329,27 @@
   notesToggle.addEventListener('change', () => { showNotes = notesToggle.checked; applyNotes(); saveState(); });
   applyNotes();
 
-  /* ---------- export and import of the grid ----------
-     The file holds the letters in the grid and the notes, nothing else. */
+  /* ---------- export and import ----------
+     The file holds everything you have entered: the codes of both columns and of the title,
+     the letters in the grid, and the notes. Importing replaces all of it, and every window
+     in the same room receives the imported version. */
   const ioStatus = document.getElementById('ioStatus');
   const say = (text, bad) => { ioStatus.textContent = text; ioStatus.classList.toggle('bad', !!bad); };
+  const count = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
   document.getElementById('exportGrid').addEventListener('click', () => {
-    const data = { app: 'arrows-puzzle', version: 1, letters: window.arrows.letters(), notes: { ...notes } };
+    const codes = {};
+    for (const [name, listId] of Object.entries(CODE_NAMES)) codes[name] = columns[listId].box.value;
+    const data = { app: 'arrows-puzzle', version: 2, codes, letters: window.arrows.letters(), notes: { ...notes } };
     const a = Object.assign(document.createElement('a'), {
       href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' })),
-      download: 'arrows-grid-' + new Date().toISOString().slice(0, 10) + '.json',
+      download: 'arrows-' + new Date().toISOString().slice(0, 10) + '.json',
     });
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    say(`Exported ${Object.keys(data.letters).length} letters and ${Object.keys(data.notes).length} notes.`);
+    say(`Exported the codes, ${count(Object.keys(data.letters).length, 'letter')} and ${count(Object.keys(data.notes).length, 'note')}.`);
   });
 
   const importFile = document.getElementById('importFile');
@@ -1333,10 +1360,10 @@
     if (!file) return;
     let data;
     try { data = JSON.parse(await file.text()); } catch { return say('That file is not valid JSON.', true); }
-    if (!data || typeof data !== 'object' || typeof data.letters !== 'object' || !data.letters) return say('That file does not hold a grid export.', true);
+    if (!data || typeof data !== 'object' || typeof data.letters !== 'object' || !data.letters) return say('That file is not an export from this page.', true);
 
-    // keep only entries that fit this grid
-    const letters = {}, noteSlots = {};
+    // keep only what fits this grid and what can be read
+    const letters = {}, noteSlots = {}, codes = {};
     let skipped = 0;
     for (const [key, v] of Object.entries(data.letters)) {
       if (inputs[key] && typeof v === 'string' && v) letters[key] = v.slice(0, 1); else skipped++;
@@ -1345,10 +1372,16 @@
       const [key, slot] = slotKey.split('#');
       if (inputs[key] && /^[0-8]$/.test(slot) && typeof v === 'string' && v) noteSlots[slotKey] = v.slice(0, 1); else skipped++;
     }
-    const have = Object.keys(window.arrows.letters()).length + Object.keys(notes).length;
-    if (have && !confirm('Replace the letters and notes in the grid with the ones from this file?')) return say('Import cancelled.');
+    for (const [name, listId] of Object.entries(CODE_NAMES)) {
+      const text = data.codes && data.codes[name];
+      if (text === undefined) continue;                       // an older file without this code: leave the box alone
+      if (typeof text === 'string' && canRead(listId, text)) codes[name] = text; else skipped++;
+    }
+    if (!confirm('Replace the codes, letters and notes with the ones from this file? Every connected window gets them too.')) return say('Import cancelled.');
 
     // replace everything, telling the other windows about each change
+    const applied = applyCodes(codes);
+    if (sync.sendCodes && applied) sync.sendCodes(codes);
     for (const [key, i] of Object.entries(inputs)) {
       const v = letters[key] || '';
       if (i.value !== v) { i.value = v; emitLetter(key); }
@@ -1356,7 +1389,8 @@
     for (const slotKey of new Set([...Object.keys(notes), ...Object.keys(noteSlots)])) setNote(slotKey, noteSlots[slotKey] || '', true);
     syncLetters();
     saveState();
-    say(`Imported ${Object.keys(letters).length} letters and ${Object.keys(noteSlots).length} notes` + (skipped ? `, skipped ${skipped} that do not fit.` : '.'));
+    say(`Imported ${count(applied, 'code set')}, ${count(Object.keys(letters).length, 'letter')} and ${count(Object.keys(noteSlots).length, 'note')}`
+      + (skipped ? `, skipped ${skipped} that did not fit.` : '.'));
   });
 
   const toggleSettings = open => {
@@ -1380,6 +1414,7 @@
       refresh();
       saveState();
     });
+    columns[listId] = { box, refresh };
     refresh();
   }
 
@@ -1416,6 +1451,7 @@
     peers.clear();
     api.sync.onLetter = null;
     api.sync.onNote = null;
+    api.sync.sendCodes = null;
   }
 
   function connect(code) {
@@ -1449,6 +1485,11 @@
 
     api.sync.onLetter = (key, value) => letters.set(key, value);
     api.sync.onNote = (key, value) => noteMap.set(key, value);
+
+    // imported codes go out once, to the windows connected right now; the letters and notes travel in the doc
+    const imports = room.makeAction('import');
+    imports.onMessage = data => { if (data && typeof data === 'object') api.applyCodes(data); };
+    api.sync.sendCodes = codes => { if (peers.size) imports.send(codes); };
     show(code);
   }
 
