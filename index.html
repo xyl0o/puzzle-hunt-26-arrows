@@ -100,6 +100,9 @@
   .col { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-height: 92vh; width: 100%; }
   .col.left { justify-self: end; }
   .col.right { justify-self: start; }
+  .colhead { flex: none; margin: 0 0 0 8px; color: var(--ink); line-height: 0; }
+  .colhead svg { display: block; height: 30px; width: auto; }
+  .col.right .colhead svg { height: 56px; }
   .panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; scrollbar-width: thin; }
   .source { display: grid; gap: 4px; }
   .codes { display: grid; gap: 14px; padding-top: 12px; border-top: 1.5px solid rgba(91, 98, 117, .35); }
@@ -262,6 +265,7 @@
   </div>
 </div>
 <section class="col left">
+  <h2 class="colhead"><svg viewBox="0 0 72 28" role="img" aria-label="First set, read left to right" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14H66M54 4l12 10-12 10"/></svg></h2>
   <nav class="panel" aria-label="First set of paths"><ul id="setA"></ul><p class="empty" hidden>The first set of paths goes here.</p></nav>
 </section>
 <main class="board">
@@ -269,6 +273,7 @@
   <svg id="overlay" aria-hidden="true"></svg>
 </main>
 <section class="col right">
+  <h2 class="colhead"><svg viewBox="0 0 28 72" role="img" aria-label="Second set, read top to bottom" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4V66M4 54l10 12 10-12"/></svg></h2>
   <nav class="panel" aria-label="Second set of paths"><ul id="setB"></ul><p class="empty" hidden>The second set of paths goes here.</p></nav>
 </section>
 
