@@ -123,20 +123,6 @@
     color: var(--ink);
     font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  #settingsPanel .sync textarea {
-    box-sizing: border-box;
-    width: 100%;
-    resize: vertical;
-    padding: 5px 8px;
-    border: 1.5px solid var(--ink-soft);
-    border-radius: 6px;
-    background: var(--cell);
-    color: var(--ink);
-    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    overflow-wrap: anywhere;
-  }
-  #settingsPanel .sync textarea:focus { outline: 2px solid var(--trace); outline-offset: 1px; border-color: var(--trace); }
-  #settingsPanel .sync .hint { min-height: 0; }
   #settingsPanel .sync input:focus { outline: 2px solid var(--trace); outline-offset: 1px; border-color: var(--trace); }
   #settingsPanel .sync p { margin: 0; font-size: 12px; line-height: 1.3; color: var(--ink-soft); min-height: 1.3em; }
   .codes { display: grid; gap: 14px; padding-top: 12px; border-top: 1.5px solid rgba(91, 98, 117, .35); }
@@ -334,9 +320,6 @@
       <label for="setRoom">Room code</label>
       <input type="text" id="setRoom" maxlength="40" spellcheck="false" autocomplete="off" autocapitalize="off">
       <p id="roomStatus" aria-live="polite"></p>
-      <label for="setTurn">Relay server (optional)</label>
-      <textarea id="setTurn" rows="2" spellcheck="false" autocomplete="off" placeholder="https://yourapp.metered.live/api/v1/turn/credentials?apiKey=…"></textarea>
-      <p class="hint">Only needed when two laptops cannot connect directly. Paste a Metered credentials link or a JSON list of ICE servers. This stays in this browser.</p>
     </div>
     <div class="codes">
     <div class="source">
@@ -1004,7 +987,6 @@
   };
   const sync = {
     room: randomRoom(),
-    turn: '',          // relay server for connections that cannot go direct: a credentials link or a JSON list
     onLetter: null,    // (key, value) => void, set by the sync module
     onRoom: null,      // (room) => void, set by the sync module
     status: text => { document.getElementById('roomStatus').textContent = text; },
@@ -1037,11 +1019,10 @@
     for (const [key, i] of Object.entries(inputs)) if (i.value) letters[key] = i.value;
     const codes = {};
     for (const id of Object.keys(DEFAULTS)) codes[id] = document.getElementById('raw' + id.slice(3)).value;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed], room: sync.room, turn: sync.turn })); } catch { /* storage unavailable */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed], room: sync.room })); } catch { /* storage unavailable */ }
   }
 
   const saved = loadState();
-  if (typeof saved.turn === 'string') sync.turn = saved.turn;
   if (typeof saved.room === 'string') sync.room = saved.room;   // no saved room (first visit, older saves): keep the random one
   for (const k of saved.collapsed || []) if (typeof k === 'string') collapsed.add(k);
   for (const k of Object.keys(VIEW_DEFAULT)) {
@@ -1097,13 +1078,6 @@
     saveState();
     if (sync.onRoom) sync.onRoom(sync.room);
   });
-  const turnInput = document.getElementById('setTurn');
-  turnInput.value = sync.turn;
-  turnInput.addEventListener('change', () => {
-    sync.turn = turnInput.value.trim();
-    saveState();
-    if (sync.onRoom) sync.onRoom(sync.room);   // reconnect with the new relay
-  });
   sync.status(sync.room ? 'Starting sync…' : 'Sync is off.');
 
   const toggleSettings = open => {
@@ -1149,26 +1123,11 @@
   let doc = null, room = null;
   const peers = new Set();
 
-  let note = '';
   function show(code) {
     if (!code) return api.sync.status('Sync is off.');
-    api.sync.status((peers.size
+    api.sync.status(peers.size
       ? `Connected to ${peers.size} other ${peers.size === 1 ? 'window' : 'windows'}.`
-      : 'Waiting for another window with the same code.') + note);
-  }
-
-  // The relay setting is either a link that returns the ICE server list (Metered does) or the list itself.
-  async function relayServers(spec) {
-    note = '';
-    if (!spec) return undefined;
-    try {
-      const list = spec.startsWith('[') ? JSON.parse(spec) : await (await fetch(spec)).json();
-      if (!Array.isArray(list) || !list.length) throw new Error('empty');
-      return list;
-    } catch {
-      note = ' The relay server setting could not be read, so only direct connections work.';
-      return undefined;
-    }
+      : 'Waiting for another window with the same code.');
   }
 
   function disconnect() {
@@ -1179,13 +1138,9 @@
     api.sync.onLetter = null;
   }
 
-  let epoch = 0;   // a newer connect call makes an older, still waiting one give up
-  async function connect(code) {
-    const mine = ++epoch;
+  function connect(code) {
     disconnect();
     if (!Y || !code) return show(code);
-    const turnConfig = await relayServers(api.sync.turn);
-    if (mine !== epoch) return;
     doc = new Y.Doc();
     const letters = doc.getMap('letters');
     // a clear is stored as '' so that it wins over an old letter in another window
@@ -1196,7 +1151,7 @@
       for (const key of event.keysChanged) api.setLetter(key, letters.get(key) ?? '');
     });
 
-    room = joinRoom({ appId: 'xyl0o-arrows-puzzle-hunt', ...(turnConfig ? { turnConfig } : {}) }, code);
+    room = joinRoom({ appId: 'xyl0o-arrows-puzzle-hunt' }, code);
     const channel = room.makeAction('yjs');
     doc.on('update', (update, origin) => { if (origin !== REMOTE && peers.size) channel.send(update); });
     channel.onMessage = data => { Y.applyUpdate(doc, new Uint8Array(data), REMOTE); adopt(); };
