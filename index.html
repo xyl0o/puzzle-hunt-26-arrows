@@ -194,6 +194,26 @@
     color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
   }
+  .lead { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .fold {
+    all: unset;
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    border-radius: 4px;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .fold:hover { background: rgba(19, 26, 43, .1); color: var(--ink); }
+  .fold:focus-visible { outline: 2px solid var(--trace); outline-offset: 1px; }
+  .path.active .fold { color: rgba(240, 236, 235, .7); }
+  .path.active .fold:hover { background: rgba(240, 236, 235, .18); color: var(--paper); }
+  .fold svg { width: 12px; height: 12px; transition: transform .15s; }
+  .path.collapsed .fold svg { transform: rotate(-90deg); }
+  .path.collapsed .words { display: none; }
+  .path.collapsed .solution { margin-top: 3px; }
   .body { min-width: 0; }
   .solution { display: flex; flex-wrap: nowrap; margin-top: 8px; white-space: nowrap; }
   .solution .letter { border: 1.5px solid var(--ink-soft); border-radius: 4px; height: calc(var(--gw) * .85); line-height: calc(var(--gw) * .8); }
@@ -256,7 +276,7 @@
     cursor: pointer;
   }
   #settingsPanel .back:focus-visible { outline: 2px solid var(--trace); outline-offset: 2px; }
-  @media (prefers-reduced-motion: reduce) { .cell { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .cell, .fold svg { transition: none; } }
 </style>
 </head>
 <body>
@@ -571,7 +591,16 @@
         solution.appendChild(g);
       }
       body.append(words, solution);
-      btn.append(label, body);
+
+      const fold = document.createElement('button');
+      fold.className = 'fold';
+      fold.type = 'button';
+      fold.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>';
+      const lead = document.createElement('div');
+      lead.className = 'lead';
+      lead.append(label, fold);
+      btn.append(lead, body);
+      setFolded(btn, collapsed.has(listId + ':' + path.num));
       li.appendChild(btn);
       list.appendChild(li);
     });
@@ -585,6 +614,16 @@
     syncLetters();
     draw();
     highlight(hlKey);   // the rows were rebuilt, so mark the current field again
+  }
+
+  // Folding hides the hint arrows and letters and leaves only the solution.
+  function setFolded(row, folded) {
+    row.classList.toggle('collapsed', folded);
+    const fold = row.querySelector('.fold');
+    fold.setAttribute('aria-expanded', String(!folded));
+    const text = folded ? 'Show the hint' : 'Show only the solution';
+    fold.title = text;
+    fold.setAttribute('aria-label', text + ', path ' + row.dataset.num);
   }
 
   function syncLetters() {
@@ -667,6 +706,7 @@
   const MODES = ['diagonal', 'direction', 'small', 'big'];
   const VIEW_DEFAULT = { round: 1, thick: 1, transp: 10, mode: 'diagonal', size: 100 };   // roundness and thickness are multipliers, transparency is a percent
   const view = { ...VIEW_DEFAULT };
+  const collapsed = new Set();   // "listId:num" of rows folded down to their solution
   const selected = new Map();   // "listId:num" -> { listId, num, color }, in selection order
 
   const freeColor = () => {
@@ -854,7 +894,16 @@
   document.addEventListener('click', e => {
     if (e.target.matches('input.letter')) return;
     const row = e.target.closest('.path');
-    if (row) select(row);
+    if (!row) return;
+    if (e.target.closest('.fold')) {
+      const key = row.dataset.set + ':' + row.dataset.num;
+      const folded = !collapsed.has(key);
+      if (folded) collapsed.add(key); else collapsed.delete(key);
+      setFolded(row, folded);
+      saveState();
+      return;
+    }
+    select(row);
   });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
@@ -876,10 +925,11 @@
     for (const [key, i] of Object.entries(inputs)) if (i.value) letters[key] = i.value;
     const codes = {};
     for (const id of Object.keys(DEFAULTS)) codes[id] = document.getElementById('raw' + id.slice(3)).value;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view })); } catch { /* storage unavailable */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed] })); } catch { /* storage unavailable */ }
   }
 
   const saved = loadState();
+  for (const k of saved.collapsed || []) if (typeof k === 'string') collapsed.add(k);
   for (const k of Object.keys(VIEW_DEFAULT)) {
     const v = saved.view && saved.view[k];
     if (k === 'mode' ? MODES.includes(v) : (typeof v === 'number' && isFinite(v))) view[k] = k === 'size' ? Math.min(100, Math.max(50, v)) : v;
