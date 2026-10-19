@@ -628,22 +628,56 @@
       // letter index, so repeated visits to a cell never share a spot.
       const g = el('g', { fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 1 - view.transp / 100 }, overlay);
       const n = steps.length;
+
+      // Nodes in travel order: leave a cell, land in the next, slide along that cell's
+      // diagonal to the next leaving spot, and so on. The whole route is one smooth line.
+      const nodes = [];
+      const add = (pt, land) => {
+        const last = nodes[nodes.length - 1];
+        if (last && Math.hypot(pt[0] - last.x, pt[1] - last.y) < 1) { if (land) last.stay = true; return; }
+        nodes.push({ x: pt[0], y: pt[1], land });
+      };
       steps.forEach(({ from, to }, k) => {
-        const [x0, y0] = anchor(from[0], from[1], k / n);
-        const [x1, y1] = anchor(to[0], to[1], (CHAIN ? k + 1 : k) / n);
-        const d = Math.hypot(x1 - x0, y1 - y0);
-        if (d < 1) { el('circle', { cx: x1, cy: y1, r: cellPx * 0.07 }, g); return; }
-        // a hand-drawn bow: two control points pushed sideways by slightly different,
-        // but repeatable, amounts (seeded by path number and letter index)
-        const ux = (x1 - x0) / d, uy = (y1 - y0) / d, px = -uy, py = ux;
-        const side = rand(path.num, k, 1) < 0.5 ? -1 : 1;
-        const b1 = side * view.round * d * (0.14 + 0.16 * rand(path.num, k, 2));
-        const b2 = side * view.round * d * (0.08 + 0.16 * rand(path.num, k, 3));
-        const c1 = [x0 + ux * d * 0.3 + px * b1, y0 + uy * d * 0.3 + py * b1];
-        const c2 = [x0 + ux * d * 0.7 + px * b2, y0 + uy * d * 0.7 + py * b2];
-        el('path', { d: `M${x0},${y0} C${c1} ${c2} ${x1},${y1}` }, g);
-        const tx = x1 - c2[0], ty = y1 - c2[1], tl = Math.hypot(tx, ty) || 1;
-        chevron(g, x1, y1, tx / tl, ty / tl, cellPx * 0.12 * (0.75 + 0.25 * view.thick), sw);
+        if (k === 0) add(anchor(from[0], from[1], 0), false);
+        add(anchor(to[0], to[1], (CHAIN ? k + 1 : k) / n), true);
+        if (k + 1 < n) add(anchor(to[0], to[1], (k + 1) / n), false);
+      });
+
+      // One tangent per node is shared by the segment arriving and the one leaving, so the
+      // line has no kinks. Roundness blends from "follow the chords" (0) to fully smooth (1),
+      // and beyond 1 it lengthens the handles. A repeatable twist per node keeps it hand-drawn.
+      const norm = v => { const l = Math.hypot(v[0], v[1]) || 1; return [v[0] / l, v[1] / l]; };
+      const dir = (p, q) => norm([q.x - p.x, q.y - p.y]);
+      const rot = (v, t) => [v[0] * Math.cos(t) - v[1] * Math.sin(t), v[0] * Math.sin(t) + v[1] * Math.cos(t)];
+      const m = Math.min(view.round, 1);
+      if (nodes.length > 1) nodes.forEach((p, i) => {
+        const cin = i > 0 ? dir(nodes[i - 1], p) : null;
+        const cout = i < nodes.length - 1 ? dir(p, nodes[i + 1]) : null;
+        let smooth = cin && cout ? [cin[0] + cout[0], cin[1] + cout[1]] : (cin || cout);
+        if (Math.hypot(smooth[0], smooth[1]) < 0.2) smooth = [-cout[1], cout[0]];   // a straight reversal
+        smooth = norm(smooth);
+        const blend = c => c ? norm([c[0] + (smooth[0] - c[0]) * m, c[1] + (smooth[1] - c[1]) * m]) : smooth;
+        const twist = (rand(path.num, i, 5) - 0.5) * 0.9 * Math.min(view.round, 1.5);
+        p.tin = rot(blend(cin), twist);
+        p.tout = rot(blend(cout), twist);
+      });
+
+      if (nodes.length > 1) {
+        const reach = 0.33 * (view.round > 1 ? 1 + (view.round - 1) * 1.2 : 1);
+        let dstr = `M${nodes[0].x},${nodes[0].y}`;
+        for (let i = 0; i < nodes.length - 1; i++) {
+          const p = nodes[i], q = nodes[i + 1];
+          const d = Math.hypot(q.x - p.x, q.y - p.y);
+          const h1 = d * reach * (1 + (rand(path.num, i, 6) - 0.5) * 0.6 * m);
+          const h2 = d * reach * (1 + (rand(path.num, i, 7) - 0.5) * 0.6 * m);
+          dstr += ` C${p.x + p.tout[0] * h1},${p.y + p.tout[1] * h1} ${q.x - q.tin[0] * h2},${q.y - q.tin[1] * h2} ${q.x},${q.y}`;
+        }
+        el('path', { d: dstr }, g);
+      }
+      const head = cellPx * 0.12 * (0.75 + 0.25 * view.thick);
+      nodes.forEach(p => {
+        if (p.stay) el('circle', { cx: p.x, cy: p.y, r: cellPx * 0.07 }, g);
+        else if (p.land) chevron(g, p.x, p.y, p.tin[0], p.tin[1], head, sw);
       });
       const [sx, sy] = anchor(start[0], start[1], 0);
       el('circle', { cx: sx, cy: sy, r: cellPx * 0.06, fill: color, stroke: 'none' }, g);
