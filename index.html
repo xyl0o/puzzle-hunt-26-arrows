@@ -232,6 +232,10 @@
   #settingsPanel label { display: grid; grid-template-columns: 1fr auto; row-gap: 4px; font-size: 14px; }
   #settingsPanel output { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   #settingsPanel input[type="range"] { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--trace); }
+  #settingsPanel fieldset.modes { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 14px; }
+  #settingsPanel .modes legend { padding: 0; margin-bottom: 6px; }
+  #settingsPanel label.opt { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  #settingsPanel label.opt input { accent-color: var(--trace); margin: 0; }
   #settingsPanel .back {
     all: unset;
     justify-self: start;
@@ -253,6 +257,13 @@
     <label>Roundness <output id="outRound"></output><input type="range" id="setRound" min="0" max="2" step="0.05"></label>
     <label>Thickness <output id="outThick"></output><input type="range" id="setThick" min="0.5" max="3" step="0.1"></label>
     <label>Transparency <output id="outTransp"></output><input type="range" id="setTransp" min="0" max="80" step="1"></label>
+    <fieldset class="modes">
+      <legend>Where arrows start and land</legend>
+      <label class="opt"><input type="radio" name="mode" value="diagonal"> Diagonal</label>
+      <label class="opt"><input type="radio" name="mode" value="direction"> Direction</label>
+      <label class="opt"><input type="radio" name="mode" value="small"> Random, small</label>
+      <label class="opt"><input type="radio" name="mode" value="big"> Random, big</label>
+    </fieldset>
     <button type="button" class="back" id="setDefault">Back to default look</button>
     <div class="codes">
     <div class="source">
@@ -608,7 +619,8 @@
       return `hsl(${Math.round((h + dh + 360) % 360)} ${Math.round(s)}% ${Math.round(Math.min(80, Math.max(25, l + dl)))}%)`;
     });
   }
-  const VIEW_DEFAULT = { round: 1, thick: 1, transp: 10 };   // roundness and thickness are multipliers, transparency is a percent
+  const MODES = ['diagonal', 'direction', 'small', 'big'];
+  const VIEW_DEFAULT = { round: 1, thick: 1, transp: 10, mode: 'diagonal' };   // roundness and thickness are multipliers, transparency is a percent
   const view = { ...VIEW_DEFAULT };
   const selected = new Map();   // "listId:num" -> { listId, num, color }, in selection order
 
@@ -670,15 +682,43 @@
       // Nodes in travel order: leave a cell, land in the next, slide along that cell's
       // diagonal to the next leaving spot, and so on. The whole route is one smooth line.
       const nodes = [];
+      const direct = view.mode === 'direction';
       const add = (pt, land, w) => {
         const last = nodes[nodes.length - 1];
         if (last && Math.hypot(pt[0] - last.x, pt[1] - last.y) < 1) { if (land) last.stay = true; return; }
-        nodes.push({ x: pt[0], y: pt[1], land, w });
+        nodes.push({ x: pt[0], y: pt[1], land, w, brk: direct && !land });   // in direction mode every arrow stands alone
       };
-      steps.forEach(({ from, to, w }, k) => {
-        if (k === 0) add(anchor(from[0], from[1], 0), false, w);
-        add(anchor(to[0], to[1], (CHAIN ? k + 1 : k) / n), true, w);
-        if (k + 1 < n) add(anchor(to[0], to[1], (k + 1) / n), false, steps[k + 1].w);
+
+      // Where an arrow leaves its cell and where it lands, by mode:
+      //   diagonal   a spot sliding from top left to bottom right with the letter index
+      //   small/big  a repeatable random spot inside the middle third / the inner 80% of the cell
+      //   direction  the cell centre, pulled back to the edge of an invisible circle towards the other end
+      const box = (cr, cc) => { const e = cells[cr + ',' + cc]; return { x: e.offsetLeft, y: e.offsetTop, w: e.offsetWidth }; };
+      const spot = (cell, lo, hi, k, seed) => {
+        const b = box(cell[0], cell[1]);
+        return [b.x + b.w * (lo + (hi - lo) * rand(path.num, k, seed)), b.y + b.w * (lo + (hi - lo) * rand(path.num, k, seed + 1))];
+      };
+      const R = cellPx * 0.27;
+      const cut = (k, atStart) => {
+        const f = box(steps[k].from[0], steps[k].from[1]), t = box(steps[k].to[0], steps[k].to[1]);
+        const [fx, fy] = [f.x + f.w / 2, f.y + f.w / 2], [tx, ty] = [t.x + t.w / 2, t.y + t.w / 2];
+        const d = Math.hypot(tx - fx, ty - fy);
+        if (d < 1) return [fx, fy];
+        const ux = (tx - fx) / d, uy = (ty - fy) / d;
+        return atStart ? [fx + ux * R, fy + uy * R] : [tx - ux * R, ty - uy * R];
+      };
+      const RANGE = { small: [0.33, 0.66], big: [0.1, 0.9] };
+      const depPos = k => direct ? cut(k, true)
+        : RANGE[view.mode] ? spot(steps[k].from, ...RANGE[view.mode], k, 11)
+        : anchor(steps[k].from[0], steps[k].from[1], k / n);
+      const landPos = k => direct ? cut(k, false)
+        : RANGE[view.mode] ? spot(steps[k].to, ...RANGE[view.mode], k, 13)
+        : anchor(steps[k].to[0], steps[k].to[1], (CHAIN ? k + 1 : k) / n);
+
+      steps.forEach(({ w }, k) => {
+        if (k === 0) add(depPos(0), false, w);
+        add(landPos(k), true, w);
+        if (k + 1 < n) add(depPos(k + 1), false, steps[k + 1].w);
       });
 
       // One tangent per node is shared by the segment arriving and the one leaving, so the
@@ -689,8 +729,9 @@
       const rot = (v, t) => [v[0] * Math.cos(t) - v[1] * Math.sin(t), v[0] * Math.sin(t) + v[1] * Math.cos(t)];
       const m = Math.min(view.round, 1);
       if (nodes.length > 1) nodes.forEach((p, i) => {
-        const cin = i > 0 ? dir(nodes[i - 1], p) : null;
-        const cout = i < nodes.length - 1 ? dir(p, nodes[i + 1]) : null;
+        const cin = i > 0 && !p.brk ? dir(nodes[i - 1], p) : null;
+        const cout = i < nodes.length - 1 && !nodes[i + 1].brk ? dir(p, nodes[i + 1]) : null;
+        if (!cin && !cout) { p.tin = p.tout = [1, 0]; return; }   // a lone point, e.g. a stay between two cut arrows
         let smooth = cin && cout ? [cin[0] + cout[0], cin[1] + cout[1]] : (cin || cout);
         if (Math.hypot(smooth[0], smooth[1]) < 0.2) smooth = [-cout[1], cout[0]];   // a straight reversal
         smooth = norm(smooth);
@@ -706,6 +747,7 @@
         const flush = () => { if (dstr) el('path', { d: dstr, stroke: cols[lastW] }, g); dstr = ''; };
         for (let i = 0; i < nodes.length - 1; i++) {
           const p = nodes[i], q = nodes[i + 1];
+          if (q.brk) { flush(); lastW = -1; continue; }
           if (q.w !== lastW) { flush(); lastW = q.w; dstr = `M${p.x},${p.y}`; }
           const d = Math.hypot(q.x - p.x, q.y - p.y);
           const h1 = d * reach * (1 + (rand(path.num, i, 6) - 0.5) * 0.6 * m);
@@ -720,8 +762,7 @@
         if (p.stay) el('circle', { cx: p.x, cy: p.y, r: cellPx * 0.07, ...wc }, g);
         else if (p.land) { const hg = el('g', wc, g); chevron(hg, p.x, p.y, p.tin[0], p.tin[1], head, sw); }
       });
-      const [sx, sy] = anchor(start[0], start[1], 0);
-      el('circle', { cx: sx, cy: sy, r: cellPx * 0.06, fill: color, stroke: 'none' }, g);
+      if (nodes.length) el('circle', { cx: nodes[0].x, cy: nodes[0].y, r: cellPx * 0.06, fill: color, stroke: 'none' }, g);
     }
 
     // cells shared by several paths are split into diagonal stripes, one per colour
@@ -796,7 +837,7 @@
   const saved = loadState();
   for (const k of Object.keys(VIEW_DEFAULT)) {
     const v = saved.view && saved.view[k];
-    if (typeof v === 'number' && isFinite(v)) view[k] = v;
+    if (k === 'mode' ? MODES.includes(v) : (typeof v === 'number' && isFinite(v))) view[k] = v;
   }
   for (const [key, v] of Object.entries(saved.letters || {})) if (inputs[key] && typeof v === 'string') inputs[key].value = v.slice(0, 1);
 
@@ -809,6 +850,7 @@
     { key: 'transp', input: 'setTransp', out: 'outTransp', show: v => Math.round(v) + '%' },
   ];
   function showSliders() {
+    document.querySelectorAll('input[name="mode"]').forEach(r => { r.checked = r.value === view.mode; });
     for (const { key, input, out, show } of SLIDERS) {
       document.getElementById(input).value = view[key];
       document.getElementById(out).textContent = show(view[key]);
@@ -822,6 +864,12 @@
       saveState();
     });
   }
+  document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    view.mode = r.value;
+    draw();
+    saveState();
+  }));
   document.getElementById('setDefault').addEventListener('click', () => {
     Object.assign(view, VIEW_DEFAULT);
     showSliders();
