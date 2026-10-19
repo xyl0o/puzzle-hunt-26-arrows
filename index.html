@@ -19,7 +19,7 @@
     --wash-black: #2a3a86;
     --gap: clamp(16px, 2.5vw, 40px);
     --scale: 1;
-    --size: calc(min(84vh, 42vw, 720px) * var(--scale));
+    --size: calc(min(100vh - 170px, 42vw, 720px) * var(--scale));
     --gw: clamp(17px, 1.95vw, 28px);
   }
   * { box-sizing: border-box; }
@@ -37,6 +37,12 @@
   }
   @media (max-width: 700px) { :root { --gap: 8px; } }
 
+  /* ---------- title and board ---------- */
+  .center { display: flex; flex-direction: column; align-items: center; gap: 30px; min-width: 0; }
+  .titlebar { width: var(--size); min-width: min(100%, 320px); }
+  .titlebar ul { list-style: none; margin: 0; padding: 0; }
+  .path.title { grid-template-columns: auto 1fr; }
+  .path.title .label { text-align: left; }
   /* ---------- board ---------- */
   .board { position: relative; width: var(--size); height: var(--size); }
   #grid {
@@ -299,6 +305,9 @@
     <button type="button" class="back" id="setDefault">Back to default look</button>
     <div class="codes">
     <div class="source">
+      <span class="srclabel" id="lblT">Title codes</span>
+      <textarea id="rawT" aria-labelledby="lblT" spellcheck="false"></textarea><div class="foot"><p class="err" id="errT" aria-live="polite"></p><button type="button" class="reset" id="resetT">Reset to defaults</button></div></div>
+    <div class="source">
       <span class="srclabel" id="lblA">First set codes</span>
       <textarea id="rawA" aria-labelledby="lblA" spellcheck="false"></textarea><div class="foot"><p class="err" id="errA" aria-live="polite"></p><button type="button" class="reset" id="resetA">Reset to defaults</button></div></div>
     <div class="source">
@@ -311,10 +320,13 @@
   <h2 class="colhead"><svg viewBox="0 0 72 28" role="img" aria-label="First set, read left to right" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14H66M54 4l12 10-12 10"/></svg></h2>
   <nav class="panel" aria-label="First set of paths"><ul id="setA"></ul><p class="empty" hidden>The first set of paths goes here.</p></nav>
 </section>
-<main class="board">
-  <div id="grid"></div>
-  <svg id="overlay" aria-hidden="true"></svg>
-</main>
+<div class="center">
+  <nav class="titlebar" aria-label="Title"><ul id="setT"></ul><p class="empty" hidden>The title goes here.</p></nav>
+  <main class="board">
+    <div id="grid"></div>
+    <svg id="overlay" aria-hidden="true"></svg>
+  </main>
+</div>
 <section class="col right">
   <h2 class="colhead"><svg viewBox="0 0 28 72" role="img" aria-label="Second set, read top to bottom" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4V66M4 54l10 12 10-12"/></svg></h2>
   <nav class="panel" aria-label="Second set of paths"><ul id="setB"></ul><p class="empty" hidden>The second set of paths goes here.</p></nav>
@@ -325,6 +337,7 @@
      Pasted exactly as received. "<number>." starts an arrow line, "/" separates
      words, spaces separate arrows, "." is stay and "'" is a tick mark. */
   const RAW_A = `e1.ee se sw e w ne n5.e se ne ss / ww e e nn / sw s / ne w wsw ese ssw s ne nwnw w s9.e w ene / e ss wnw e s ne n10.. ss nn . sse e11.e e nne .12.ee w w ese13.ne e n . w e14.ee e e15.. ee nn nw ene17.nwnw se e se s ssw nn nene21.ee ene s s24.wsw n n s s w s nw e25.ne nene nwnw s nn / ene s s . n w26.. wnw nw / wnw nnw n ene se w27.nn e e nn ' swsw / nene n w28.wnw n nw sse`;
+  const RAW_T = `. ese nn sw wnw nnw / ss nw w nne n ee ssw ssw wsw sse`;   // the title; its start is worked out from the grid
   const RAW_B = `s1.ese ss sese n ene2.sse w s sese ssw ne3.ssw n e e / n s w e4.. ww sw ese nn5.s sse w ene ww6.s ssw n ssw ese se wnw ww nw / nnw sw s ene s nn wsw nn7.wsw ss s / nw ene sw n ese8.ww se s ww ssw n / . wnw nn se14.e ene se wnw16.. w nwnw nene se nw18.s ene . s n .19.nne wnw sw nn sse e20.sw s nnw w21.nene e ss nnw e s s22.nn nne e23.nnw nnw ss ss nne nnw ss `;
 
   /* ---------- grid ---------- */
@@ -433,6 +446,24 @@
     return { code: parts.map(p => COMPASS[p]).join('') };
   }
 
+  // Reads arrows from "body" (words split by "/") and walks them from "start",
+  // giving every arrow the field it lands on. "label" names the path in errors.
+  function walkWords(body, start, label) {
+    let [r, c] = start;
+    return body.split('/').map(w => w.trim().split(/\s+/).filter(Boolean).map(tok => {
+      const a = parseArrow(tok);
+      if (!a.tick) {
+        for (const d of a.code) {
+          r += STEP[d][0]; c += STEP[d][1];
+          if (r < 1 || r > N || c < 1 || c > N) throw new Error(label + ' leaves the grid at "' + tok + '".');
+        }
+        if (isBlack(r, c)) throw new Error(label + ' lands on a black square at "' + tok + '".');
+        a.land = [r, c];
+      }
+      return a;
+    })).filter(w => w.length);
+  }
+
   function parseSet(raw) {
     const chunks = raw.split(/(\d+)\./);   // [preamble, num, body, num, body, ...]
     if (raw.trim() && chunks.length < 3) throw new Error('No path labels like "1." found.');
@@ -440,23 +471,37 @@
     for (let i = 1; i < chunks.length; i += 2) {
       const num = +chunks[i];
       if (!cellOfNumber[num]) throw new Error('The grid has no clue number ' + num + '.');
-      let [r, c] = cellOfNumber[num];
-      const words = chunks[i + 1].split('/').map(w => w.trim().split(/\s+/).filter(Boolean).map(tok => {
-        const a = parseArrow(tok);
-        if (!a.tick) {
-          for (const d of a.code) {
-            r += STEP[d][0]; c += STEP[d][1];
-            if (r < 1 || r > N || c < 1 || c > N) throw new Error('Path ' + num + ' leaves the grid at "' + tok + '".');
-          }
-          if (isBlack(r, c)) throw new Error('Path ' + num + ' lands on a black square at "' + tok + '".');
-          a.land = [r, c];
-        }
-        return a;
-      })).filter(w => w.length);
-      paths.push({ num, words });
+      const start = cellOfNumber[num];
+      paths.push({ num, start, words: walkWords(chunks[i + 1], start, 'Path ' + num) });
     }
     return paths;
   }
+
+  // The title has no clue number. Its start is the one field the whole route fits from,
+  // unless the text begins with a clue number ("24.") that names the start.
+  function parseTitle(raw) {
+    const m = raw.match(/^\s*(\d+)\.([\s\S]*)$/);
+    const body = m ? m[2] : raw;
+    body.split(/[\s/]+/).filter(Boolean).forEach(parseArrow);   // report unreadable arrows first
+    if (!body.trim()) return [];
+    let start;
+    if (m) {
+      start = cellOfNumber[+m[1]];
+      if (!start) throw new Error('The grid has no clue number ' + m[1] + '.');
+    } else {
+      const fits = [];
+      for (let r = 1; r <= N; r++) for (let c = 1; c <= N; c++) {
+        if (!open(r, c)) continue;
+        try { walkWords(body, [r, c], 'Title'); fits.push([r, c]); } catch { /* does not fit from here */ }
+      }
+      if (fits.length !== 1) throw new Error(fits.length
+        ? 'The title fits from ' + fits.length + ' fields. Begin the text with a clue number such as "24." to choose one.'
+        : 'The title does not fit on the grid from any start.');
+      start = fits[0];
+    }
+    return [{ num: 0, title: true, start, words: walkWords(body, start, 'Title') }];
+  }
+  const PARSERS = { setA: parseSet, setB: parseSet, setT: parseTitle };
 
   /* ---------- glyph drawing (svg, screen coords, y down) ---------- */
   const SVGNS = 'http://www.w3.org/2000/svg';
@@ -509,7 +554,7 @@
   }
 
   /* ---------- panels ---------- */
-  const sets = { setA: [], setB: [] };     // listId -> parsed paths
+  const sets = { setA: [], setB: [], setT: [] };     // listId -> parsed paths
 
   // Re-reads the input text of one column and rebuilds its rows. A text that
   // cannot be read leaves the last good rows in place and shows the reason.
@@ -520,7 +565,7 @@
     const err = document.getElementById('err' + listId.slice(3));
     let paths;
     try {
-      paths = raw.trim() ? parseSet(raw) : [];
+      paths = raw.trim() ? PARSERS[listId](raw) : [];
     } catch (e) {
       err.textContent = e.message;
       box.setAttribute('aria-invalid', 'true');
@@ -534,15 +579,15 @@
     paths.forEach(path => {
       const li = document.createElement('li');
       const btn = document.createElement('div');
-      btn.className = 'path';
+      btn.className = 'path' + (path.title ? ' title' : '');
       btn.dataset.set = listId;
       btn.dataset.num = path.num;
       const label = document.createElement('button');
       label.className = 'label';
       label.type = 'button';
       label.setAttribute('aria-pressed', 'false');
-      label.setAttribute('aria-label', 'Show path ' + path.num + ' on the grid');
-      label.textContent = path.num + '.';
+      label.setAttribute('aria-label', path.title ? 'Show the title on the grid' : 'Show path ' + path.num + ' on the grid');
+      label.textContent = path.title ? 'Title' : path.num + '.';
       const words = document.createElement('span');
       words.className = 'words';
       for (const w of path.words) {
@@ -575,9 +620,9 @@
       body.className = 'body';
       const solution = document.createElement('span');
       solution.className = 'solution';
-      const [sr, sc] = cellOfNumber[path.num];
+      const [sr, sc] = path.start;
       const [dr, dc] = listId === 'setA' ? [0, 1] : [1, 0];   // left column reads across, right column down
-      for (let r = sr, c = sc; open(r, c); r += dr, c += dc) {
+      for (let r = sr, c = sc; !path.title && open(r, c); r += dr, c += dc) {
         const g = document.createElement('span');
         g.className = 'g sol';
         const L = document.createElement('input');
@@ -590,7 +635,7 @@
         g.append(L, Object.assign(document.createElement('span'), { className: 'coord', textContent: coord(r, c) }));
         solution.appendChild(g);
       }
-      body.append(words, solution);
+      body.append(words, ...(path.title ? [] : [solution]));   // the title's hint is its solution
 
       const fold = document.createElement('button');
       fold.className = 'fold';
@@ -598,9 +643,9 @@
       fold.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>';
       const lead = document.createElement('div');
       lead.className = 'lead';
-      lead.append(label, fold);
+      lead.append(label, ...(path.title ? [] : [fold]));
       btn.append(lead, body);
-      setFolded(btn, collapsed.has(listId + ':' + path.num));
+      if (!path.title) setFolded(btn, collapsed.has(listId + ':' + path.num));
       li.appendChild(btn);
       list.appendChild(li);
     });
@@ -744,7 +789,7 @@
 
     for (const { listId, num, color } of selected.values()) {
       const path = sets[listId].find(p => p.num === num);
-      let [r, c] = cellOfNumber[path.num];
+      let [r, c] = path.start;
       const start = [r, c];
       const cols = wordColors(color, path.words.length);
       mark(r, c, cols[0], false);
@@ -915,7 +960,7 @@
      Codes and typed letters live in this browser's localStorage. Without it
      (private window, blocked storage) the page still works, it just forgets. */
   const STORE_KEY = 'arrows-puzzle-v1';
-  const DEFAULTS = { setA: RAW_A.trim(), setB: RAW_B.trim() };
+  const DEFAULTS = { setT: RAW_T.trim(), setA: RAW_A.trim(), setB: RAW_B.trim() };
 
   function loadState() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
