@@ -159,7 +159,8 @@
   }
   .path .label:focus-visible { outline: 2px solid var(--trace); outline-offset: 1px; }
   .words { display: flex; flex-wrap: wrap; gap: 4px calc(var(--gw) * .7); }
-  .word { display: flex; flex-wrap: nowrap; flex: none; white-space: nowrap; }
+  .word { display: flex; flex-wrap: nowrap; flex: none; white-space: nowrap; border-top: 3px solid transparent; padding-top: 3px; }
+  .path.active .word { border-top-color: var(--wc, transparent); }
   .g { display: flex; flex-direction: column; align-items: center; width: var(--gw); }
   .g.tick { width: 12px; }
   .g svg { width: var(--gw); height: var(--gw); display: block; overflow: visible; }
@@ -571,6 +572,27 @@
   const CHAIN = false;    // false: an arrow lands at the offset it left from (parallel lines);
                           // true: it lands one step further along, so lines join end to end
   const PALETTE = ['#2447e8', '#1f9d55', '#e8780c', '#c2338f', '#0e9aa7', '#d93a3a', '#7a3fe0', '#a8800a'];
+  // Words of one path share its colour family: same look, nudged in hue and lightness.
+  const SUB_SHIFTS = [[-20, 0], [20, 0], [-10, 9], [10, -9], [-30, -7], [30, 7]];
+  function hexToHsl(hex) {
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+    let h = 0;
+    if (d) {
+      if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+      h *= 60;
+    }
+    const sat = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+    return [(h + 360) % 360, sat * 100, l * 100];
+  }
+  function wordColors(color, count) {
+    if (count < 2) return [color];     // a single word keeps the main colour
+    const [h, s, l] = hexToHsl(color);
+    return Array.from({ length: count }, (_, i) => {
+      const [dh, dl] = SUB_SHIFTS[i % SUB_SHIFTS.length];
+      return `hsl(${Math.round((h + dh + 360) % 360)} ${Math.round(s)}% ${Math.round(Math.min(80, Math.max(25, l + dl)))}%)`;
+    });
+  }
   const VIEW_DEFAULT = { round: 1, thick: 1, transp: 10 };   // roundness and thickness are multipliers, transparency is a percent
   const view = { ...VIEW_DEFAULT };
   const selected = new Map();   // "listId:num" -> { listId, num, color }, in selection order
@@ -612,35 +634,36 @@
       const path = sets[listId].find(p => p.num === num);
       let [r, c] = cellOfNumber[path.num];
       const start = [r, c];
-      mark(r, c, color, false);
-      const steps = [];                       // one per letter: { from, to }
-      for (const word of path.words) for (const a of word) {
+      const cols = wordColors(color, path.words.length);
+      mark(r, c, cols[0], false);
+      const steps = [];                       // one per letter: { from, to, w }
+      path.words.forEach((word, w) => { for (const a of word) {
         if (a.tick) continue;
         const from = [r, c];
-        for (const d of a.code) { r += STEP[d][0]; c += STEP[d][1]; mark(r, c, color, false); }
-        mark(r, c, color, true);
-        steps.push({ from, to: [r, c] });
-      }
+        for (const d of a.code) { r += STEP[d][0]; c += STEP[d][1]; mark(r, c, cols[w], false); }
+        mark(r, c, cols[w], true);
+        steps.push({ from, to: [r, c], w });
+      } });
       (rings[start.join(',')] = rings[start.join(',')] || []).push(color);
 
       // Straight line from where an arrow leaves its cell to where it lands in the next.
       // Both points slide along the cell's top-left to bottom-right diagonal with the
       // letter index, so repeated visits to a cell never share a spot.
-      const g = el('g', { fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 1 - view.transp / 100 }, overlay);
+      const g = el('g', { fill: 'none', stroke: cols[0], 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 1 - view.transp / 100 }, overlay);
       const n = steps.length;
 
       // Nodes in travel order: leave a cell, land in the next, slide along that cell's
       // diagonal to the next leaving spot, and so on. The whole route is one smooth line.
       const nodes = [];
-      const add = (pt, land) => {
+      const add = (pt, land, w) => {
         const last = nodes[nodes.length - 1];
         if (last && Math.hypot(pt[0] - last.x, pt[1] - last.y) < 1) { if (land) last.stay = true; return; }
-        nodes.push({ x: pt[0], y: pt[1], land });
+        nodes.push({ x: pt[0], y: pt[1], land, w });
       };
-      steps.forEach(({ from, to }, k) => {
-        if (k === 0) add(anchor(from[0], from[1], 0), false);
-        add(anchor(to[0], to[1], (CHAIN ? k + 1 : k) / n), true);
-        if (k + 1 < n) add(anchor(to[0], to[1], (k + 1) / n), false);
+      steps.forEach(({ from, to, w }, k) => {
+        if (k === 0) add(anchor(from[0], from[1], 0), false, w);
+        add(anchor(to[0], to[1], (CHAIN ? k + 1 : k) / n), true, w);
+        if (k + 1 < n) add(anchor(to[0], to[1], (k + 1) / n), false, steps[k + 1].w);
       });
 
       // One tangent per node is shared by the segment arriving and the one leaving, so the
@@ -664,20 +687,23 @@
 
       if (nodes.length > 1) {
         const reach = 0.33 * (view.round > 1 ? 1 + (view.round - 1) * 1.2 : 1);
-        let dstr = `M${nodes[0].x},${nodes[0].y}`;
+        let dstr = '', lastW = -1;
+        const flush = () => { if (dstr) el('path', { d: dstr, stroke: cols[lastW] }, g); dstr = ''; };
         for (let i = 0; i < nodes.length - 1; i++) {
           const p = nodes[i], q = nodes[i + 1];
+          if (q.w !== lastW) { flush(); lastW = q.w; dstr = `M${p.x},${p.y}`; }
           const d = Math.hypot(q.x - p.x, q.y - p.y);
           const h1 = d * reach * (1 + (rand(path.num, i, 6) - 0.5) * 0.6 * m);
           const h2 = d * reach * (1 + (rand(path.num, i, 7) - 0.5) * 0.6 * m);
           dstr += ` C${p.x + p.tout[0] * h1},${p.y + p.tout[1] * h1} ${q.x - q.tin[0] * h2},${q.y - q.tin[1] * h2} ${q.x},${q.y}`;
         }
-        el('path', { d: dstr }, g);
+        flush();
       }
       const head = cellPx * 0.12 * (0.75 + 0.25 * view.thick);
       nodes.forEach(p => {
-        if (p.stay) el('circle', { cx: p.x, cy: p.y, r: cellPx * 0.07 }, g);
-        else if (p.land) chevron(g, p.x, p.y, p.tin[0], p.tin[1], head, sw);
+        const wc = { stroke: cols[p.w] };
+        if (p.stay) el('circle', { cx: p.x, cy: p.y, r: cellPx * 0.07, ...wc }, g);
+        else if (p.land) { const hg = el('g', wc, g); chevron(hg, p.x, p.y, p.tin[0], p.tin[1], head, sw); }
       });
       const [sx, sy] = anchor(start[0], start[1], 0);
       el('circle', { cx: sx, cy: sy, r: cellPx * 0.06, fill: color, stroke: 'none' }, g);
@@ -719,6 +745,9 @@
     row.classList.toggle('active', !!color);
     if (color) row.style.setProperty('--pc', color); else row.style.removeProperty('--pc');
     row.querySelector('.label').setAttribute('aria-pressed', String(!!color));
+    const words = row.querySelectorAll('.word');
+    const cols = color ? wordColors(color, words.length) : [];
+    words.forEach((w, i) => { if (color) w.style.setProperty('--wc', cols[i]); else w.style.removeProperty('--wc'); });
   }
 
   document.addEventListener('click', e => {
