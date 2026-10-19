@@ -78,7 +78,23 @@
     line-height: 1;
     z-index: 1;
   }
+  .cell .notes {
+    position: absolute;
+    inset: 5%;
+    display: grid;
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+    place-items: center;
+    pointer-events: none;
+    font-size: calc(var(--size) / 9 * 0.2);
+    font-weight: 500;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--ink);
+    opacity: .42;
+  }
   .cell input {
+    position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
     border: 0;
@@ -94,6 +110,49 @@
     outline: none;
   }
   .cell input:focus { box-shadow: inset 0 0 0 2px var(--ink); }
+  /* the enlarged cell for notes */
+  #noteBox {
+    position: fixed;
+    z-index: 30;
+    box-sizing: border-box;
+    display: grid;
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+    gap: 2px;
+    border: 2px solid var(--ink);
+    background: var(--ink);
+    box-shadow: 0 12px 40px rgba(19, 26, 43, .35);
+  }
+  #noteBox[hidden] { display: none; }
+  #noteBox .note {
+    all: unset;
+    box-sizing: border-box;
+    min-width: 0;
+    background: var(--cell);
+    color: var(--ink);
+    text-align: center;
+    text-transform: uppercase;
+    font-weight: 500;
+    caret-color: transparent;
+  }
+  #noteBox .note:focus { background: var(--wash); }
+  #noteBox .nclose {
+    all: unset;
+    position: absolute;
+    top: -14px;
+    right: -14px;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--ink);
+    color: var(--paper);
+    font: 500 18px/1 "DM Sans", system-ui, sans-serif;
+    cursor: pointer;
+  }
+  #noteBox .nclose:hover { background: var(--trace); }
+  #noteBox .nclose:focus-visible { outline: 2px solid var(--trace); outline-offset: 2px; }
+  #noteBox .ntag { position: absolute; left: -2px; bottom: 100%; margin-bottom: 4px; font-size: 13px; font-weight: 500; color: var(--ink); }
   #overlay {
     position: absolute;
     inset: 0;
@@ -396,6 +455,11 @@
           cell.appendChild(num);
           cellOfNumber[n] = [r, c];
         }
+        const layer = document.createElement('div');
+        layer.className = 'notes';
+        layer.setAttribute('aria-hidden', 'true');
+        for (let i = 0; i < 9; i++) layer.appendChild(document.createElement('span'));
+        cell.appendChild(layer);
         const input = document.createElement('input');
         input.maxLength = 1;
         input.autocomplete = 'off';
@@ -973,8 +1037,99 @@
   });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
+    if (!noteBox.hidden) { closeNotes(); return; }
     if (!settingsPanel.hidden) { toggleSettings(false); settingsBtn.focus(); return; }
     if (selected.size && e.target.tagName !== 'TEXTAREA') select(null);
+  });
+
+  /* ---------- notes ----------
+     Every white cell has nine note slots (a 3x3 array). Right-click a cell, or any letter box that
+     points at it, to open the cell enlarged and type into the slots. A slot is saved as "r,c#slot". */
+  const notes = {};
+  const noteKey = (key, i) => key + '#' + i;
+
+  function paintNotes(key) {
+    const layer = cells[key] && cells[key].querySelector('.notes');
+    if (layer) [...layer.children].forEach((sp, i) => { sp.textContent = notes[noteKey(key, i)] || ''; });
+  }
+
+  function setNote(slotKey, value, emit) {
+    const v = String(value).slice(0, 1);
+    if ((notes[slotKey] || '') === v) return;
+    if (v) notes[slotKey] = v; else delete notes[slotKey];
+    const [key, slot] = slotKey.split('#');
+    paintNotes(key);
+    if (openNote && openNote.key === key) noteInputs[+slot].value = v;
+    saveState();
+    if (emit && sync.onNote) sync.onNote(slotKey, v);
+  }
+
+  const noteBox = document.createElement('div');
+  noteBox.id = 'noteBox';
+  noteBox.hidden = true;
+  noteBox.setAttribute('role', 'dialog');
+  const noteInputs = Array.from({ length: 9 }, (_, i) => {
+    const inp = document.createElement('input');
+    inp.className = 'note';
+    inp.maxLength = 1;
+    inp.autocomplete = 'off';
+    inp.spellcheck = false;
+    inp.dataset.slot = i;
+    return inp;
+  });
+  const noteClose = Object.assign(document.createElement('button'), { type: 'button', className: 'nclose', textContent: '×' });
+  noteClose.setAttribute('aria-label', 'Close notes');
+  const noteTag = Object.assign(document.createElement('span'), { className: 'ntag' });
+  noteBox.append(...noteInputs, noteClose, noteTag);
+  document.body.appendChild(noteBox);
+  let openNote = null;   // { key } while the enlarged cell is showing
+
+  function openNotes(key, anchor) {
+    const size = Math.min(cells[key].offsetWidth * 4, innerWidth - 60, innerHeight - 80);
+    const r = anchor.getBoundingClientRect();
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    Object.assign(noteBox.style, {
+      width: size + 'px',
+      height: size + 'px',
+      left: clamp(r.left + r.width / 2 - size / 2, 24, innerWidth - size - 24) + 'px',
+      top: clamp(r.top + r.height / 2 - size / 2, 36, innerHeight - size - 24) + 'px',
+      fontSize: size / 3 * 0.55 + 'px',
+    });
+    const [rr, cc] = key.split(',').map(Number);
+    noteTag.textContent = coord(rr, cc);
+    noteBox.setAttribute('aria-label', 'Notes for field ' + coord(rr, cc));
+    noteInputs.forEach((inp, i) => { inp.value = notes[noteKey(key, i)] || ''; });
+    openNote = { key };
+    noteBox.hidden = false;
+    highlight(key);
+    noteInputs[0].focus();
+  }
+  function closeNotes() {
+    noteBox.hidden = true;
+    openNote = null;
+  }
+
+  noteClose.addEventListener('click', closeNotes);
+  document.addEventListener('contextmenu', e => {
+    const t = e.target;
+    if (!t.matches || !(t.matches('#grid input') || t.matches('input.letter'))) return;
+    e.preventDefault();
+    const key = keyOf(t);
+    openNotes(key, t.matches('#grid input') ? cells[key] : t);
+  });
+  document.addEventListener('pointerdown', e => { if (!noteBox.hidden && !noteBox.contains(e.target)) closeNotes(); });
+  noteBox.addEventListener('focusin', e => { if (e.target.select) e.target.select(); });
+  noteBox.addEventListener('input', e => {
+    const i = +e.target.dataset.slot;
+    setNote(noteKey(openNote.key, i), e.target.value, true);
+    if (e.target.value && i < 8) noteInputs[i + 1].focus();
+  });
+  noteBox.addEventListener('keydown', e => {
+    const i = +e.target.dataset.slot;
+    if (Number.isNaN(i)) return;
+    const move = { ArrowLeft: i % 3 ? i - 1 : i, ArrowRight: i % 3 < 2 ? i + 1 : i, ArrowUp: i >= 3 ? i - 3 : i, ArrowDown: i < 6 ? i + 3 : i };
+    if (e.key in move) { e.preventDefault(); noteInputs[move[e.key]].focus(); }
+    else if (e.key === 'Backspace' && !e.target.value && i > 0) { e.preventDefault(); noteInputs[i - 1].focus(); }
   });
 
   /* ---------- live sync between windows ----------
@@ -988,6 +1143,7 @@
   const sync = {
     room: randomRoom(),
     onLetter: null,    // (key, value) => void, set by the sync module
+    onNote: null,      // (slotKey, value) => void, set by the sync module
     onRoom: null,      // (room) => void, set by the sync module
     status: text => { document.getElementById('roomStatus').textContent = text; },
   };
@@ -995,6 +1151,8 @@
   window.arrows = {
     sync,
     letters: () => Object.fromEntries(Object.entries(inputs).filter(([, i]) => i.value).map(([k, i]) => [k, i.value])),
+    notes: () => ({ ...notes }),
+    setNote: (slotKey, value) => setNote(slotKey, value, false),
     // a letter that arrived from another window: show it and keep it, without sending it back
     setLetter(key, value) {
       const i = inputs[key];
@@ -1019,7 +1177,7 @@
     for (const [key, i] of Object.entries(inputs)) if (i.value) letters[key] = i.value;
     const codes = {};
     for (const id of Object.keys(DEFAULTS)) codes[id] = document.getElementById('raw' + id.slice(3)).value;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed], room: sync.room })); } catch { /* storage unavailable */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed], room: sync.room, notes })); } catch { /* storage unavailable */ }
   }
 
   const saved = loadState();
@@ -1028,6 +1186,10 @@
   for (const k of Object.keys(VIEW_DEFAULT)) {
     const v = saved.view && saved.view[k];
     if (k === 'mode' ? MODES.includes(v) : (typeof v === 'number' && isFinite(v))) view[k] = k === 'size' ? Math.min(100, Math.max(50, v)) : v;
+  }
+  for (const [slotKey, v] of Object.entries(saved.notes || {})) {
+    const key = slotKey.split('#')[0];
+    if (cells[key] && !cells[key].classList.contains('black') && typeof v === 'string' && v) { notes[slotKey] = v.slice(0, 1); paintNotes(key); }
   }
   for (const [key, v] of Object.entries(saved.letters || {})) if (inputs[key] && typeof v === 'string') inputs[key].value = v.slice(0, 1);
 
@@ -1136,6 +1298,7 @@
     room = doc = null;
     peers.clear();
     api.sync.onLetter = null;
+    api.sync.onNote = null;
   }
 
   function connect(code) {
@@ -1144,11 +1307,20 @@
     doc = new Y.Doc();
     const letters = doc.getMap('letters');
     // a clear is stored as '' so that it wins over an old letter in another window
-    const adopt = () => { for (const [key, v] of Object.entries(api.letters())) if (!letters.has(key)) letters.set(key, v); };
+    const noteMap = doc.getMap('notes');
+    const adopt = () => {
+      for (const [key, v] of Object.entries(api.letters())) if (!letters.has(key)) letters.set(key, v);
+      for (const [key, v] of Object.entries(api.notes())) if (!noteMap.has(key)) noteMap.set(key, v);
+    };
 
     letters.observe((event, tr) => {
       if (tr.origin !== REMOTE) return;
       for (const key of event.keysChanged) api.setLetter(key, letters.get(key) ?? '');
+    });
+
+    noteMap.observe((event, tr) => {
+      if (tr.origin !== REMOTE) return;
+      for (const key of event.keysChanged) api.setNote(key, noteMap.get(key) ?? '');
     });
 
     room = joinRoom({ appId: 'xyl0o-arrows-puzzle-hunt' }, code);
@@ -1159,6 +1331,7 @@
     room.onPeerLeave = id => { peers.delete(id); show(code); };
 
     api.sync.onLetter = (key, value) => letters.set(key, value);
+    api.sync.onNote = (key, value) => noteMap.set(key, value);
     show(code);
   }
 
