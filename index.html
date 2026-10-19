@@ -980,9 +980,13 @@
   /* ---------- live sync between windows ----------
      Only grid letters travel. The sync module at the bottom of the page (Yjs, with Trystero
      as the peer-to-peer link) plugs into this small interface once its libraries have loaded. */
-  const DEFAULT_ROOM = 'AAAAAA';
+  // A browser without a saved room code makes up its own, six characters without look-alikes.
+  const randomRoom = () => {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return Array.from(crypto.getRandomValues(new Uint8Array(6)), b => alphabet[b % alphabet.length]).join('');
+  };
   const sync = {
-    room: DEFAULT_ROOM,
+    room: randomRoom(),
     onLetter: null,    // (key, value) => void, set by the sync module
     onRoom: null,      // (room) => void, set by the sync module
     status: text => { document.getElementById('roomStatus').textContent = text; },
@@ -1019,7 +1023,7 @@
   }
 
   const saved = loadState();
-  if (typeof saved.room === 'string') sync.room = saved.room;   // older saves have no room and keep the default
+  if (typeof saved.room === 'string') sync.room = saved.room;   // no saved room (first visit, older saves): keep the random one
   for (const k of saved.collapsed || []) if (typeof k === 'string') collapsed.add(k);
   for (const k of Object.keys(VIEW_DEFAULT)) {
     const v = saved.view && saved.view[k];
@@ -1100,6 +1104,7 @@
     refresh();
   }
 
+  saveState();   // keeps a freshly made room code for the next visit
   new ResizeObserver(() => draw()).observe(board);
 </script>
 <script type="module">
