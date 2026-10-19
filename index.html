@@ -112,6 +112,19 @@
   .col.right .colhead svg { height: 56px; }
   .panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; scrollbar-width: thin; }
   .source { display: grid; gap: 4px; }
+  #settingsPanel .sync { display: grid; gap: 6px; font-size: 14px; }
+  #settingsPanel .sync input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 5px 8px;
+    border: 1.5px solid var(--ink-soft);
+    border-radius: 6px;
+    background: var(--cell);
+    color: var(--ink);
+    font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  #settingsPanel .sync input:focus { outline: 2px solid var(--trace); outline-offset: 1px; border-color: var(--trace); }
+  #settingsPanel .sync p { margin: 0; font-size: 12px; line-height: 1.3; color: var(--ink-soft); min-height: 1.3em; }
   .codes { display: grid; gap: 14px; padding-top: 12px; border-top: 1.5px solid rgba(91, 98, 117, .35); }
   .srclabel { font-size: 14px; }
   .source textarea {
@@ -303,6 +316,11 @@
       <label class="opt"><input type="radio" name="mode" value="big"> Random, big</label>
     </fieldset>
     <button type="button" class="back" id="setDefault">Back to default look</button>
+    <div class="sync">
+      <label for="setRoom">Room code</label>
+      <input type="text" id="setRoom" maxlength="40" spellcheck="false" autocomplete="off" autocapitalize="off">
+      <p id="roomStatus" aria-live="polite"></p>
+    </div>
     <div class="codes">
     <div class="source">
       <span class="srclabel" id="lblT">Title codes</span>
@@ -422,9 +440,11 @@
     }
   });
   grid.addEventListener('input', e => {
-    if (e.target.value) focusAt(+e.target.dataset.r, +e.target.dataset.c + 1);
+    const t = e.target;
+    if (t.value) focusAt(+t.dataset.r, +t.dataset.c + 1);
     syncLetters();
     saveState();
+    emitLetter(t.dataset.r + ',' + t.dataset.c);
   });
   grid.addEventListener('focusin', e => e.target.select && e.target.select());
 
@@ -685,6 +705,7 @@
     inputs[L.dataset.key].value = L.value;
     syncLetters();
     saveState();
+    emitLetter(L.dataset.key);
     if (L.value) stepLetter(L, 1);
   });
   document.addEventListener('keydown', e => {
@@ -956,6 +977,30 @@
     if (selected.size && e.target.tagName !== 'TEXTAREA') select(null);
   });
 
+  /* ---------- live sync between windows ----------
+     Only grid letters travel. The sync module at the bottom of the page (Yjs, with Trystero
+     as the peer-to-peer link) plugs into this small interface once its libraries have loaded. */
+  const DEFAULT_ROOM = 'AAAAAA';
+  const sync = {
+    room: DEFAULT_ROOM,
+    onLetter: null,    // (key, value) => void, set by the sync module
+    onRoom: null,      // (room) => void, set by the sync module
+    status: text => { document.getElementById('roomStatus').textContent = text; },
+  };
+  const emitLetter = key => { if (sync.onLetter) sync.onLetter(key, inputs[key].value); };
+  window.arrows = {
+    sync,
+    letters: () => Object.fromEntries(Object.entries(inputs).filter(([, i]) => i.value).map(([k, i]) => [k, i.value])),
+    // a letter that arrived from another window: show it and keep it, without sending it back
+    setLetter(key, value) {
+      const i = inputs[key];
+      if (!i || i.value === value) return;
+      i.value = String(value).slice(0, 1);
+      syncLetters();
+      saveState();
+    },
+  };
+
   /* ---------- saved edits ----------
      Codes and typed letters live in this browser's localStorage. Without it
      (private window, blocked storage) the page still works, it just forgets. */
@@ -970,10 +1015,11 @@
     for (const [key, i] of Object.entries(inputs)) if (i.value) letters[key] = i.value;
     const codes = {};
     for (const id of Object.keys(DEFAULTS)) codes[id] = document.getElementById('raw' + id.slice(3)).value;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed] })); } catch { /* storage unavailable */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ codes, letters, view, collapsed: [...collapsed], room: sync.room })); } catch { /* storage unavailable */ }
   }
 
   const saved = loadState();
+  if (typeof saved.room === 'string') sync.room = saved.room;   // older saves have no room and keep the default
   for (const k of saved.collapsed || []) if (typeof k === 'string') collapsed.add(k);
   for (const k of Object.keys(VIEW_DEFAULT)) {
     const v = saved.view && saved.view[k];
@@ -1020,6 +1066,16 @@
     draw();
     saveState();
   });
+  const roomInput = document.getElementById('setRoom');
+  roomInput.value = sync.room;
+  roomInput.addEventListener('change', () => {
+    sync.room = roomInput.value.trim();
+    roomInput.value = sync.room;
+    saveState();
+    if (sync.onRoom) sync.onRoom(sync.room);
+  });
+  sync.status(sync.room ? 'Starting sync…' : 'Sync is off.');
+
   const toggleSettings = open => {
     settingsPanel.hidden = !open;
     settingsBtn.setAttribute('aria-expanded', String(open));
@@ -1045,6 +1101,64 @@
   }
 
   new ResizeObserver(() => draw()).observe(board);
+</script>
+<script type="module">
+  // Letters are kept in a Yjs map (one entry per field, '' when cleared). Yjs merges edits from
+  // every window, and Trystero carries the updates peer to peer; the public Nostr relays it uses
+  // only introduce the browsers to each other, no letters pass through them.
+  const api = window.arrows;
+  const REMOTE = 'remote';
+  let Y, joinRoom;
+  try {
+    [Y, { joinRoom }] = await Promise.all([import('https://esm.sh/yjs@13.6.27'), import('https://esm.sh/trystero@0.25.4')]);
+  } catch (err) {
+    api.sync.status('Sync is unavailable: its libraries could not be loaded.');
+  }
+
+  let doc = null, room = null;
+  const peers = new Set();
+
+  function show(code) {
+    if (!code) return api.sync.status('Sync is off.');
+    api.sync.status(peers.size
+      ? `Connected to ${peers.size} other ${peers.size === 1 ? 'window' : 'windows'}.`
+      : 'Waiting for another window with the same code.');
+  }
+
+  function disconnect() {
+    if (room) room.leave();
+    if (doc) doc.destroy();
+    room = doc = null;
+    peers.clear();
+    api.sync.onLetter = null;
+  }
+
+  function connect(code) {
+    disconnect();
+    if (!Y || !code) return show(code);
+    doc = new Y.Doc();
+    const letters = doc.getMap('letters');
+    // a clear is stored as '' so that it wins over an old letter in another window
+    const adopt = () => { for (const [key, v] of Object.entries(api.letters())) if (!letters.has(key)) letters.set(key, v); };
+
+    letters.observe((event, tr) => {
+      if (tr.origin !== REMOTE) return;
+      for (const key of event.keysChanged) api.setLetter(key, letters.get(key) ?? '');
+    });
+
+    room = joinRoom({ appId: 'xyl0o-arrows-puzzle-hunt' }, code);
+    const channel = room.makeAction('yjs');
+    doc.on('update', (update, origin) => { if (origin !== REMOTE && peers.size) channel.send(update); });
+    channel.onMessage = data => { Y.applyUpdate(doc, new Uint8Array(data), REMOTE); adopt(); };
+    room.onPeerJoin = id => { peers.add(id); channel.send(Y.encodeStateAsUpdate(doc), { target: id }); show(code); };
+    room.onPeerLeave = id => { peers.delete(id); show(code); };
+
+    api.sync.onLetter = (key, value) => letters.set(key, value);
+    show(code);
+  }
+
+  api.sync.onRoom = connect;
+  connect(api.sync.room);
 </script>
 </body>
 </html>
